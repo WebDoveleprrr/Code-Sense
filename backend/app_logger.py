@@ -16,46 +16,34 @@ from loguru import logger
 from app.core.config import get_settings
 
 
+import threading
+
 # ------------------------------------------------------------------ #
 # Intercept stdlib logging so third-party libs use loguru
 # ------------------------------------------------------------------ #
 class _InterceptHandler(logging.Handler):
     """Route stdlib logging records into loguru."""
+    _local = threading.local()
 
     def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
+        # Prevent logging feedback recursion loops
+        if getattr(self._local, "processing", False):
+            return
+        self._local.processing = True
         try:
-            level: str | int = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
+            try:
+                level: str | int = logger.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
 
-        frame, depth = logging.currentframe(), 2
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back  # type: ignore[assignment]
-            depth += 1
+            frame, depth = logging.currentframe(), 2
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back  # type: ignore[assignment]
+                depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
-
-
-def _json_patcher(record: dict[str, Any]) -> None:
-    """Serialize the record to a JSON string and store it in record['extra']['serialized']."""
-    import json
-
-    subset = {
-        "timestamp": record["time"].isoformat(),
-        "level": record["level"].name,
-        "logger": record["name"],
-        "message": record["message"],
-        "module": record["module"],
-        "function": record["function"],
-        "line": record["line"],
-    }
-    if record["exception"]:
-        exc = record["exception"]
-        try:
-            subset["exception"] = f"{exc.type.__name__}: {exc.value}"
-        except Exception:
-            subset["exception"] = str(exc)
-    record["extra"]["serialized"] = json.dumps(subset)
+            logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        finally:
+            self._local.processing = False
 
 
 def setup_logging() -> None:
@@ -65,20 +53,39 @@ def setup_logging() -> None:
     # Remove default loguru sink
     logger.remove()
 
-    # Configure patcher for production JSON format
-    logger.configure(patcher=_json_patcher)
+    def production_formatter(record: dict[str, Any]) -> str:
+        """Serialize the record to JSON and guarantee key existence for the sink."""
+        import json
+
+        subset = {
+            "timestamp": record["time"].isoformat(),
+            "level": record["level"].name,
+            "logger": record["name"],
+            "message": record["message"],
+            "module": record["module"],
+            "function": record["function"],
+            "line": record["line"],
+        }
+        if record["exception"]:
+            exc = record["exception"]
+            try:
+                subset["exception"] = f"{exc.type.__name__}: {exc.value}"
+            except Exception:
+                subset["exception"] = str(exc)
+        record["extra"]["serialized"] = json.dumps(subset)
+        return "{extra[serialized]}\n"
 
     if settings.is_production:
         # JSON to stdout + rotating file in production
         logger.add(
             sys.stdout,
-            format="{extra[serialized]}",
+            format=production_formatter,
             level=settings.LOG_LEVEL,
             enqueue=True,
         )
         logger.add(
             str(settings.LOG_FILE),
-            format="{extra[serialized]}",
+            format=production_formatter,
             level=settings.LOG_LEVEL,
             rotation="50 MB",
             retention="30 days",
@@ -111,7 +118,7 @@ def setup_logging() -> None:
         l.propagate = False
 
 
-
 def get_logger(name: str = "codesense"):
     """Return a named loguru logger."""
     return logger.bind(name=name)
+
