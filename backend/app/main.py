@@ -52,10 +52,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.db.mongodb import connect_db
     await connect_db()
 
-    # Pre-warm the embedding model (avoids cold-start on first request)
-    from app.ml.embedder import get_embedder
-    get_embedder()
-
     logger.info("{name} is ready to serve requests.", name=settings.APP_NAME)
     yield
 

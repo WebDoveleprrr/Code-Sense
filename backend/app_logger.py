@@ -36,8 +36,8 @@ class _InterceptHandler(logging.Handler):
         logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
-def _json_serialiser(record: dict[str, Any]) -> str:
-    """Custom JSON format for production logs."""
+def _json_patcher(record: dict[str, Any]) -> None:
+    """Serialize the record to a JSON string and store it in record['extra']['serialized']."""
     import json
 
     subset = {
@@ -50,8 +50,12 @@ def _json_serialiser(record: dict[str, Any]) -> str:
         "line": record["line"],
     }
     if record["exception"]:
-        subset["exception"] = str(record["exception"])
-    return json.dumps(subset)
+        exc = record["exception"]
+        try:
+            subset["exception"] = f"{exc.type.__name__}: {exc.value}"
+        except Exception:
+            subset["exception"] = str(exc)
+    record["extra"]["serialized"] = json.dumps(subset)
 
 
 def setup_logging() -> None:
@@ -61,24 +65,25 @@ def setup_logging() -> None:
     # Remove default loguru sink
     logger.remove()
 
+    # Configure patcher for production JSON format
+    logger.configure(patcher=_json_patcher)
+
     if settings.is_production:
         # JSON to stdout + rotating file in production
         logger.add(
             sys.stdout,
-            format=_json_serialiser,  # type: ignore[arg-type]
+            format="{extra[serialized]}",
             level=settings.LOG_LEVEL,
-            serialize=False,
             enqueue=True,
         )
         logger.add(
             str(settings.LOG_FILE),
-            format=_json_serialiser,  # type: ignore[arg-type]
+            format="{extra[serialized]}",
             level=settings.LOG_LEVEL,
             rotation="50 MB",
             retention="30 days",
             compression="gz",
             enqueue=True,
-            serialize=False,
         )
     else:
         # Pretty colourised output in development
@@ -98,10 +103,13 @@ def setup_logging() -> None:
             enqueue=True,
         )
 
-    # Redirect stdlib loggers
-    logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
+    # Redirect stdlib loggers without duplicating or looping
+    logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
     for lib_logger in ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi"):
-        logging.getLogger(lib_logger).handlers = [_InterceptHandler()]
+        l = logging.getLogger(lib_logger)
+        l.handlers = [_InterceptHandler()]
+        l.propagate = False
+
 
 
 def get_logger(name: str = "codesense"):
