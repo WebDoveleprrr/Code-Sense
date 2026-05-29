@@ -1,0 +1,52 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.development
+
+# Node
+node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+coverage/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Python packaging
+*.egg-info/
+.eggs/
+
+# Cache
+.cache/
+
+# uploads
+backend/uploads/
+
+# vector indices
+backend/vector_store/indices/
+
+# secrets
+.env
+.env.*
+!.env.example
