@@ -1,24 +1,35 @@
-# backend/Dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps
+# System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl build-essential \
+    git \
+    curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Install Python dependencies
+COPY backend/requirements.txt ./requirements.txt
+
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy backend source code
+COPY backend/ .
 
-RUN mkdir -p /app/uploads /app/vector_store/indices /app/logs
+# Runtime directories
+RUN mkdir -p \
+    /app/uploads \
+    /app/vector_store/indices \
+    /app/logs
 
+# Environment
 ENV PYTHONPATH=/app
 ENV APP_ENV=production
 
+# Render provides PORT dynamically
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Start FastAPI
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
