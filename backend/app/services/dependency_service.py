@@ -66,4 +66,4 @@ async def _write_dep_log(repo_id: str, latency_ms: float) -> None:
             latency_ms=latency_ms,
         ).insert()
     except Exception as exc:
-        logger.warning("Dependency audit log write failed: {err}", err=exc)
+        logger.warning("Dependency audit log write failed: {err}", err=str(exc))

@@ -103,7 +103,10 @@ class ExplainService:
                 provider=provider,
             )
         except Exception as exc:
-            logger.warning("LLM failure for explain, falling back: {err}", err=exc)
+            from app.ml.llm_client import LLMUnavailableError
+            if isinstance(exc, LLMUnavailableError):
+                raise
+            logger.warning("LLM failure for explain, falling back: {err}", err=str(exc))
             explanation = _fallback_explain(code_snippet, language, file_path, symbol_name)
             is_fallback = True
 
@@ -291,4 +294,4 @@ async def _write_explain_log(
             latency_ms=latency_ms,
         ).insert()
     except Exception as exc:
-        logger.warning("Explain audit log write failed: {err}", err=exc)
+        logger.warning("Explain audit log write failed: {err}", err=str(exc))

@@ -48,6 +48,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     openai_key_loaded = bool(os.getenv("OPENAI_API_KEY"))
     logger.info("[ENV CHECK] LLM_PROVIDER={provider} OPENAI_API_KEY loaded={key}", provider=llm_provider, key=openai_key_loaded)
 
+    # Startup validation
+    from app.ml.llm_client import validate_startup
+    try:
+        await validate_startup()
+    except Exception as exc:
+        logger.error("LLM Startup Validation Failed: {err}", err=str(exc))
+
     # Database
     from app.db.mongodb import connect_db
     await connect_db()

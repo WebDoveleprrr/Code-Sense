@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: str = ""
 
     # ------------------------------------------------------------------ #
+    # LLM Settings
+    # ------------------------------------------------------------------ #
+    ENABLE_LLM: bool = True
+    LLM_PROVIDER: str = "ollama"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3.1:8b"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    LLM_MAX_TOKENS: int = 1024
+    LLM_TEMPERATURE: float = 0.2
+
+    # ------------------------------------------------------------------ #
     # ML / Embeddings
     # ------------------------------------------------------------------ #
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

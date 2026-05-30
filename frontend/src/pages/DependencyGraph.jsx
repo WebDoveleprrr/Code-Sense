@@ -51,7 +51,8 @@ function GraphCanvas({ nodes, edges, onNodeClick }) {
     const links = g.append("g").selectAll("line")
       .data(edges)
       .join("line")
-      .attr("class", "link")
+      .attr("stroke", "rgba(0, 255, 136, 0.15)")
+      .attr("stroke-width", 1.5)
       .attr("marker-end", "url(#arrowhead)");
 
     const node = g.append("g").selectAll(".node")
@@ -79,19 +80,43 @@ function GraphCanvas({ nodes, edges, onNodeClick }) {
       .on("click", (event, d) => {
         event.stopPropagation();
         onNodeClick(d);
+      })
+      .on("mouseover", (event, d) => {
+        links
+          .attr("stroke", (l) => l.source.id === d.id || l.target.id === d.id ? "rgba(0, 255, 136, 0.8)" : "rgba(255, 255, 255, 0.05)")
+          .attr("stroke-width", (l) => l.source.id === d.id || l.target.id === d.id ? 2.5 : 1);
+        
+        node.style("opacity", (n) => {
+          if (n.id === d.id) return 1.0;
+          const isNeighbor = edges.some(e => 
+            (e.source.id === d.id && e.target.id === n.id) || 
+            (e.target.id === d.id && e.source.id === n.id)
+          );
+          return isNeighbor ? 1.0 : 0.25;
+        });
+      })
+      .on("mouseout", () => {
+        links
+          .attr("stroke", "rgba(0, 255, 136, 0.15)")
+          .attr("stroke-width", 1.5);
+        node.style("opacity", 1.0);
       });
 
     // Node circles
     node.append("circle")
       .attr("r", NODE_RADIUS)
-      .attr("fill", (d) => langColor(d.language) + "22")
+      .attr("fill", (d) => langColor(d.language))
+      .attr("fill-opacity", 0.15)
       .attr("stroke", (d) => langColor(d.language))
-      .attr("stroke-width", 1.5);
+      .attr("stroke-width", 2.0);
 
     // Node labels
     node.append("text")
       .attr("dy", NODE_RADIUS + 14)
       .attr("text-anchor", "middle")
+      .attr("fill", "#E2E8F0")
+      .attr("font-size", "10px")
+      .attr("font-family", "monospace")
       .text((d) => {
         const name = d.label || d.id;
         const short = name.split("/").pop().replace(/\.\w+$/, "");
@@ -100,10 +125,10 @@ function GraphCanvas({ nodes, edges, onNodeClick }) {
 
     // Simulation
     simulationRef.current = d3.forceSimulation(nodes)
-      .force("link", d3.forceLink(edges).id((d) => d.id).distance(120).strength(0.5))
-      .force("charge", d3.forceManyBody().strength(-300))
+      .force("link", d3.forceLink(edges).id((d) => d.id).distance(140).strength(0.4))
+      .force("charge", d3.forceManyBody().strength(-400))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide(NODE_RADIUS + 20))
+      .force("collision", d3.forceCollide(NODE_RADIUS + 25))
       .on("tick", () => {
         links
           .attr("x1", (d) => d.source.x)

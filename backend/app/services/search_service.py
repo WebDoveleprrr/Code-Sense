@@ -82,4 +82,4 @@ class SearchService:
                 latency_ms=result.get("latency_ms", 0.0),
             ).insert()
         except Exception as exc:
-            logger.warning("Audit log write failed: {err}", err=exc)
+            logger.warning("Audit log write failed: {err}", err=str(exc))

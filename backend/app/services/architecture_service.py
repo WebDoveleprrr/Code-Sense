@@ -105,7 +105,10 @@ class ArchitectureService:
                 provider=provider,
             )
         except Exception as exc:
-            logger.warning("LLM failure for architecture, falling back: {err}", err=exc)
+            from app.ml.llm_client import LLMUnavailableError
+            if isinstance(exc, LLMUnavailableError):
+                raise
+            logger.warning("LLM failure for architecture, falling back: {err}", err=str(exc))
             summary_text = _fallback_architecture(repo.name, repo.language_breakdown, entry_points, key_components)
             is_fallback = True
 
@@ -254,7 +257,7 @@ async def _retrieve_code_samples(repo_id: str, max_chars: int = 3_000) -> Option
         return format_retrieved_context(all_chunks, max_chars=max_chars)
 
     except Exception as exc:
-        logger.warning("Architecture code sample retrieval failed: {err}", err=exc)
+        logger.warning("Architecture code sample retrieval failed: {err}", err=str(exc))
         return None
 
 
@@ -279,4 +282,4 @@ async def _write_arch_log(repo_id: str, latency_ms: float) -> None:
             latency_ms=latency_ms,
         ).insert()
     except Exception as exc:
-        logger.warning("Architecture audit log write failed: {err}", err=exc)
+        logger.warning("Architecture audit log write failed: {err}", err=str(exc))

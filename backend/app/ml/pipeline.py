@@ -93,7 +93,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
                 "[{id}] AST parse failed for {fp}: {err}",
                 id=repo_id,
                 fp=file_dict["file_path"],
-                err=exc,
+                err=str(exc),
             )
             ast_result = {
                 "language": file_dict["language"],
@@ -156,12 +156,14 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     repo.status = RepoStatus.EMBEDDING
     await repo.save()
     log_mem("Embedding generation")
+    logger.info("[{id}] START EMBEDDING", id=repo_id)
 
     from app.ml.embedding_pipeline import generate_embeddings
     from app.ml.embedder import get_embedder
 
     # Delegate CPU-bound embedding generation to thread pool
     vectors, embed_stats = await asyncio.to_thread(generate_embeddings, chunks)
+    logger.info("[{id}] EMBEDDINGS GENERATED", id=repo_id)
     embedder = get_embedder()
     logger.info(
         "[{id}] Embeddings shape: {s}  ({model})",
@@ -176,6 +178,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     repo.status = RepoStatus.INDEXING
     await repo.save()
     log_mem("Indexing vector store")
+    logger.info("[{id}] FAISS START", id=repo_id)
 
     from app.vector_store.faiss_store import FAISSStore
 
@@ -183,6 +186,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     store = FAISSStore(repo_id=repo_id, index_path=str(index_path))
     store.build(vectors, model_name=embedder.model_name)
     store.save()
+    logger.info("[{id}] FAISS COMPLETE", id=repo_id)
     logger.info("[{id}] FAISS index saved → {path}", id=repo_id, path=str(index_path))
 
     # Free vector memory immediately
@@ -200,6 +204,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     # ---------------------------------------------------------------- #
     # Step 9 — Persist chunks to MongoDB
     # ---------------------------------------------------------------- #
+    logger.info("[{id}] MONGODB UPDATE START", id=repo_id)
     chunk_docs = [
         ChunkDocument(
             repo_id=repo_id,
@@ -246,6 +251,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
         "embedding_dim": embedder.dim,
     }
     await repo.save()
+    logger.info("[{id}] STATUS READY", id=repo_id)
 
     logger.info(
         "[{id}] Pipeline complete — {files} files, {chunks} chunks, {tokens} tokens.",

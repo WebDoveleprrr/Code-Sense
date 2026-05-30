@@ -235,4 +235,4 @@ async def _rebuild_task(repo_id: str) -> None:
         )
 
     except Exception as exc:
-        logger.exception("Rebuild failed for repo {id}: {err}", id=repo_id, err=exc)
+        logger.exception("Rebuild failed for repo {id}: {err}", id=repo_id, err=str(exc))

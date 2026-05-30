@@ -138,7 +138,10 @@ class QAService:
                 provider=provider,
             )
         except Exception as exc:
-            logger.warning("[QA] LLM failure, falling back to extractive mode: {err}", err=exc)
+            from app.ml.llm_client import LLMUnavailableError
+            if isinstance(exc, LLMUnavailableError):
+                raise
+            logger.warning("[QA] LLM failure, falling back to extractive mode: {err}", err=str(exc))
             answer_text = _fallback_qa(question, ranked_chunks)
             is_fallback = True
 
@@ -227,4 +230,4 @@ async def _write_qa_log(
             latency_ms=latency_ms,
         ).insert()
     except Exception as exc:
-        logger.warning("QA audit log write failed: {err}", err=exc)
+        logger.warning("QA audit log write failed: {err}", err=str(exc))

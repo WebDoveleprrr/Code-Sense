@@ -73,6 +73,8 @@ export default function Dashboard() {
 
   const readyRepos = repos.filter((r) => r.status === "ready");
   const totalChunks = repos.reduce((s, r) => s + (r.total_chunks || 0), 0);
+  const totalLines = readyRepos.reduce((s, r) => s + (r.repo_metadata?.total_lines || 0), 0);
+  const totalFunctions = readyRepos.reduce((s, r) => s + (r.repo_metadata?.total_functions || 0), 0);
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -96,10 +98,10 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard
-          label="Repositories"
+          label="Indexed Repos"
           value={loading ? "—" : repos.length}
           icon={Database}
-          sub={`${readyRepos.length} indexed`}
+          sub={`${readyRepos.length} ready to query`}
           color="acid"
         />
         <StatCard
@@ -110,17 +112,17 @@ export default function Dashboard() {
           color="plasma"
         />
         <StatCard
-          label="Ready"
-          value={loading ? "—" : readyRepos.length}
-          icon={CheckCircle}
-          sub="Repos indexed"
+          label="Lines of Code"
+          value={loading ? "—" : totalLines.toLocaleString()}
+          icon={GitBranch}
+          sub="Indexed source lines"
           color="acid"
         />
         <StatCard
-          label="Processing"
-          value={loading ? "—" : repos.filter((r) => r.status === "processing" || r.status === "indexing").length}
+          label="Functions & Classes"
+          value={loading ? "—" : totalFunctions.toLocaleString()}
           icon={Activity}
-          sub="In progress"
+          sub="Code structures analyzed"
           color="signal"
         />
       </div>

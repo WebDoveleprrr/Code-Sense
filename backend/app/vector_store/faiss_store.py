@@ -48,6 +48,9 @@ IVF_NLIST = 100
 # FAISSStore
 # ---------------------------------------------------------------------------
 
+_index_cache: Dict[str, Tuple[faiss.Index, Dict]] = {}
+
+
 class FAISSStore:
     """
     Per-repository FAISS index wrapper.
@@ -123,6 +126,10 @@ class FAISSStore:
         tmp_index.rename(index_path)
 
         meta_path.write_text(json.dumps(self._meta, indent=2))
+        
+        # Cache globally
+        _index_cache[self.repo_id] = (self._index, self._meta)
+        
         logger.info(
             "[{id}] FAISS index saved → {path}  ({n} vectors).",
             id=self.repo_id,
@@ -131,7 +138,13 @@ class FAISSStore:
         )
 
     def load(self) -> None:
-        """Load the FAISS index (and metadata sidecar) from disk."""
+        """Load the FAISS index (and metadata sidecar) from disk or memory cache."""
+        global _index_cache
+        if self.repo_id in _index_cache:
+            self._index, self._meta = _index_cache[self.repo_id]
+            logger.info("[{id}] FAISS index loaded from memory cache.", id=self.repo_id)
+            return
+
         index_path = self._index_dir / INDEX_FILE
         meta_path = self._index_dir / META_FILE
 
@@ -146,6 +159,8 @@ class FAISSStore:
         if meta_path.exists():
             self._meta = json.loads(meta_path.read_text())
 
+        _index_cache[self.repo_id] = (self._index, self._meta)
+
         logger.info(
             "[{id}] FAISS index loaded — {n} vectors.",
             id=self.repo_id,
@@ -157,10 +172,12 @@ class FAISSStore:
         return (self._index_dir / INDEX_FILE).exists()
 
     def delete(self) -> None:
-        """Remove all index files from disk."""
+        """Remove all index files from disk and clean memory cache."""
+        global _index_cache
         import shutil
         if self._index_dir.exists():
             shutil.rmtree(self._index_dir, ignore_errors=True)
+        _index_cache.pop(self.repo_id, None)
         self._index = None
         self._meta = {}
         logger.info("[{id}] FAISS index deleted.", id=self.repo_id)

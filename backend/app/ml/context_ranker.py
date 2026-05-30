@@ -63,7 +63,7 @@ def _get_cross_encoder():
         logger.info("Cross-encoder loaded: cross-encoder/ms-marco-MiniLM-L-6-v2")
     except Exception as exc:
         logger.warning(
-            "Cross-encoder unavailable ({err}). Using FAISS scores only.", err=exc
+            "Cross-encoder unavailable ({err}). Using FAISS scores only.", err=str(exc)
         )
         _cross_encoder = None
 
@@ -152,7 +152,7 @@ def rank_chunks(
                 spread = max_ce - min_ce or 1.0
                 ce_scores = [(float(s) - min_ce) / spread for s in raw_ce]
             except Exception as exc:
-                logger.warning("Cross-encoder scoring failed: {err}", err=exc)
+                logger.warning("Cross-encoder scoring failed: {err}", err=str(exc))
 
     # ---------------------------------------------------------------- #
     # Composite scoring

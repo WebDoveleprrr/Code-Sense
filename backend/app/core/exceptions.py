@@ -145,12 +145,33 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
+async def llm_unavailable_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    logger.warning(
+        "LLM unavailable on {method} {url}: {msg}",
+        method=request.method,
+        url=str(request.url),
+        msg=str(exc),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "success": False,
+            "feature_disabled": True,
+            "message": "Local LLM unavailable."
+        }
+    )
+
+
 # ------------------------------------------------------------------ #
 # Registration helper
 # ------------------------------------------------------------------ #
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach all exception handlers to the FastAPI application."""
+    from app.ml.llm_client import LLMUnavailableError
+    app.add_exception_handler(LLMUnavailableError, llm_unavailable_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(CodeSenseBaseError, codesense_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(PydanticValidationError, validation_exception_handler)  # type: ignore[arg-type]

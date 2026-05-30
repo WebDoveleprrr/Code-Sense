@@ -46,12 +46,31 @@ class _InterceptHandler(logging.Handler):
             self._local.processing = False
 
 
+def make_exception_picklable(record) -> None:
+    """Ensure that exception info and extra parameters are fully picklable to prevent queue serialization crashes."""
+    if record.get("exception"):
+        try:
+            exc_type, exc_value, exc_tb = record["exception"]
+            import pickle
+            pickle.dumps(exc_value)
+        except Exception:
+            safe_value = Exception(str(exc_value))
+            record["exception"] = (exc_type, safe_value, exc_tb)
+            
+    for k, v in list(record.get("extra", {}).items()):
+        if isinstance(v, Exception):
+            record["extra"][k] = str(v)
+
+
 def setup_logging() -> None:
     """Configure loguru based on app environment."""
     settings = get_settings()
 
     # Remove default loguru sink
     logger.remove()
+
+    # Set up global patcher
+    logger.configure(patcher=make_exception_picklable)
 
     def production_formatter(record: dict[str, Any]) -> str:
         """Serialize the record to JSON and guarantee key existence for the sink."""
