@@ -41,6 +41,7 @@ def _make_embedder_stub(dim: int = DIM) -> MagicMock:
     stub.dim = dim
     stub.model_name = "stub-model"
     stub.max_seq_length = 256
+    stub._batch_size = 32
 
     def embed_text(text, normalize=True):
         vec = np.random.rand(dim).astype(np.float32)

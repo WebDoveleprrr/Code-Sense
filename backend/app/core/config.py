@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     EMBEDDING_DEVICE: str = "cpu"
-    EMBEDDING_BATCH_SIZE: int = 32
+    EMBEDDING_BATCH_SIZE: int = 8
 
     # ------------------------------------------------------------------ #
     # FAISS / Vector Store

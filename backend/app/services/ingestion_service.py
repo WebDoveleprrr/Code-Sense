@@ -63,7 +63,7 @@ class IngestionService:
             logger.error("process_github_repo: repo {id} not found", id=repo_id)
             return
 
-        await self._set_status(doc, RepoStatus.PROCESSING)
+        await self._set_status(doc, RepoStatus.CLONING)
         try:
             await run_ingestion_pipeline(doc)
             await self._set_status(doc, RepoStatus.READY, indexed_at=datetime.utcnow())
@@ -106,7 +106,7 @@ class IngestionService:
             logger.error("process_zip_repo: repo {id} not found", id=repo_id)
             return
 
-        await self._set_status(doc, RepoStatus.PROCESSING)
+        await self._set_status(doc, RepoStatus.PARSING)
         try:
             await run_ingestion_pipeline(doc)
             await self._set_status(doc, RepoStatus.READY, indexed_at=datetime.utcnow())

@@ -3,10 +3,12 @@ import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Search, Filter, Clock, Code2, Layers, SlidersHorizontal } from "lucide-react";
 import { useSearch } from "../hooks/useSearch";
+import { useRepository } from "../hooks/useRepositories";
 import {
   Card, Button, Input, Select, SectionHeader,
   EmptyState, ErrorAlert, Spinner, ScoreBar, Badge
 } from "../components/ui";
+import { Loader2 } from "lucide-react";
 import RepoSelector from "../components/ui/RepoSelector";
 import CodeBlock from "../components/ui/CodeBlock";
 import { formatMs, langColor } from "../utils/helpers";
@@ -88,9 +90,12 @@ export default function SemanticSearch() {
   const inputRef = useRef(null);
 
   const { results, loading, error, meta, search, clear } = useSearch();
+  const { repo, loading: repoLoading } = useRepository(repoId);
+
+  const isRepoReady = repo ? repo.status === "ready" : false;
 
   const handleSearch = () => {
-    if (!query.trim() || !repoId) return;
+    if (!query.trim() || !repoId || !isRepoReady) return;
     search({
       repo_id: repoId,
       query: query.trim(),
@@ -111,6 +116,32 @@ export default function SemanticSearch() {
         title="Semantic Search"
         subtitle="Natural language code search powered by sentence-transformers + FAISS"
       />
+
+      {/* Ingestion warning banner */}
+      {repo && repo.status !== "ready" && repo.status !== "failed" && (
+        <Card className="mb-6 border-acid/20 bg-ink-950/60 p-6 flex flex-col items-center justify-center text-center animate-slide-up animate-pulse-slow">
+          <Loader2 className="animate-spin text-acid mb-3" size={24} />
+          <h4 className="font-mono text-sm text-frost mb-1 font-bold">
+            Ingesting Codebase: <span className="text-acid">{repo.name}</span>
+          </h4>
+          <p className="text-xs text-frost-dim max-w-md font-body">
+            Current stage: <span className="font-mono text-plasma-light uppercase tracking-wider font-bold">{repo.status}</span>.
+            This page will automatically unlock once the repository is fully processed and indexed.
+          </p>
+        </Card>
+      )}
+
+      {repo && repo.status === "failed" && (
+        <Card className="mb-6 border-danger/20 bg-ink-950/60 p-6 flex flex-col items-center justify-center text-center animate-slide-up">
+          <AlertCircle className="text-danger mb-3" size={24} />
+          <h4 className="font-mono text-sm text-frost mb-1 font-bold">
+            Ingestion Failed: <span className="text-danger">{repo.name}</span>
+          </h4>
+          <p className="text-xs text-frost-dim max-w-md font-body mb-2">
+            Reason: <span className="text-danger font-mono">{repo.error_message || "Unknown error occurred"}</span>
+          </p>
+        </Card>
+      )}
 
       {/* Search bar */}
       <Card className="mb-6">
@@ -141,12 +172,13 @@ export default function SemanticSearch() {
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                   className="pl-10"
+                  disabled={!isRepoReady}
                 />
               </div>
               <Button
                 onClick={handleSearch}
                 loading={loading}
-                disabled={!query.trim() || !repoId}
+                disabled={!query.trim() || !repoId || !isRepoReady}
               >
                 Search
               </Button>
@@ -154,6 +186,7 @@ export default function SemanticSearch() {
                 onClick={() => setShowFilters(!showFilters)}
                 variant={showFilters ? "secondary" : "ghost"}
                 icon={<SlidersHorizontal size={14} />}
+                disabled={!isRepoReady}
               >
                 Filters
               </Button>

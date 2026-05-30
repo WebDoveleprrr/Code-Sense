@@ -92,6 +92,7 @@ def generate_embeddings(
           vectors — float32 array of shape (N, dim)
           stats   — dict with timing, shape, model info
     """
+    import gc
     if not chunks:
         logger.warning("generate_embeddings called with empty chunk list.")
         embedder = get_embedder()
@@ -102,13 +103,22 @@ def generate_embeddings(
 
     texts = prepare_texts(chunks)
     logger.info(
-        "Embedding pipeline: {n} chunks, model={m}",
+        "Embedding pipeline: {n} chunks, model={m}, batch_size={b}",
         n=len(texts),
         m=embedder.model_name,
+        b=embedder._batch_size,
     )
 
-    vectors = embedder.embed_batch(texts, normalize=True, show_progress=show_progress)
+    batch_size = embedder._batch_size
+    all_vectors = []
 
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i : i + batch_size]
+        batch_vectors = embedder.embed_batch(batch_texts, normalize=True, show_progress=False)
+        all_vectors.append(batch_vectors)
+        gc.collect()
+
+    vectors = np.vstack(all_vectors)
     elapsed = time.perf_counter() - t0
 
     # Sanity checks

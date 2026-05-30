@@ -21,7 +21,11 @@ class RepoSource(str, Enum):
 
 class RepoStatus(str, Enum):
     PENDING = "pending"
-    PROCESSING = "processing"
+    CLONING = "cloning"
+    PARSING = "parsing"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
+    INDEXING = "indexing"
     READY = "ready"
     FAILED = "failed"
 

@@ -34,38 +34,49 @@ from app.models.repository import RepositoryDocument, RepoSource
 async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     """
     Full ingestion pipeline executed as a background task.
-
-    Steps:
-      1. Acquire source   (clone GitHub / extract ZIP)
-      2. Parse repository (file traversal + content read)
-      3. AST parse        (language-specific symbol extraction)
-      4. Metadata build   (per-file + repo-level summaries)
-      5. Chunk            (semantic-aware + window fallback)
-      6. Embed            (sentence-transformers batch via embedding_pipeline)
-      7. FAISS index      (build + persist)
-      8. Metadata sidecar (MetadataStore JSON sidecar)
-      9. MongoDB persist  (ChunkDocuments with faiss_id)
-     10. Repo stats update
     """
+    import gc
+    from app.models.repository import RepoStatus
+
+    def log_mem(phase: str):
+        try:
+            import os
+            import psutil
+            process = psutil.Process(os.getpid())
+            mem_mb = process.memory_info().rss / (1024 * 1024)
+            logger.info("[Memory Check] [{id}] Phase: {phase} | Memory Usage: {mem:.2f} MB", id=repo_id, phase=phase, mem=mem_mb)
+        except ImportError:
+            pass
+
     settings = get_settings()
     repo_id = str(repo.id)
 
     # ---------------------------------------------------------------- #
     # Step 1 — Acquire source
     # ---------------------------------------------------------------- #
+    log_mem("Acquiring source")
     repo_dir = await _acquire_source(repo, settings)
     logger.info("[{id}] Source at {dir}", id=repo_id, dir=str(repo_dir))
 
     # ---------------------------------------------------------------- #
     # Step 2 — Repository file traversal
     # ---------------------------------------------------------------- #
-    from app.ml.repo_parser import parse_repository
+    repo.status = RepoStatus.PARSING
+    await repo.save()
+    log_mem("File traversal")
 
+    from app.ml.repo_parser import parse_repository
     parsed_files = await parse_repository(repo_dir)
     logger.info("[{id}] {n} files collected.", id=repo_id, n=len(parsed_files))
 
     if not parsed_files:
         raise ValueError("No supported source files found in the repository.")
+
+    if len(parsed_files) > 100:
+        raise ValueError(
+            f"Repository exceeds the maximum limit of 100 files (found {len(parsed_files)}). "
+            "Please upload a smaller repository for the Render free-tier environment."
+        )
 
     # ---------------------------------------------------------------- #
     # Step 3 — AST parsing (language-specific)
@@ -75,7 +86,8 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     parsed_meta: List[Dict[str, Any]] = []
     for file_dict in parsed_files:
         try:
-            ast_result = parse_source(file_dict)
+            # Delegate CPU-bound AST parsing to thread pool
+            ast_result = await asyncio.to_thread(parse_source, file_dict)
         except Exception as exc:
             logger.warning(
                 "[{id}] AST parse failed for {fp}: {err}",
@@ -114,9 +126,14 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     # ---------------------------------------------------------------- #
     # Step 5 — Chunking (semantic-aware)
     # ---------------------------------------------------------------- #
-    from app.ml.chunker import chunk_files
+    repo.status = RepoStatus.CHUNKING
+    await repo.save()
+    log_mem("Chunking")
 
-    chunks = chunk_files(
+    from app.ml.chunker import chunk_files
+    # Delegate CPU-bound chunking to thread pool
+    chunks = await asyncio.to_thread(
+        chunk_files,
         parsed_files=parsed_files,
         chunk_size=settings.CHUNK_SIZE,
         overlap=settings.CHUNK_OVERLAP,
@@ -127,13 +144,24 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     if not chunks:
         raise ValueError("Chunking produced zero chunks — repository may be empty.")
 
+    if len(chunks) > 500:
+        raise ValueError(
+            f"Repository exceeds the maximum limit of 500 chunks (found {len(chunks)}). "
+            "Please upload a smaller repository for the Render free-tier environment."
+        )
+
     # ---------------------------------------------------------------- #
     # Step 6 — Embeddings (via embedding_pipeline)
     # ---------------------------------------------------------------- #
+    repo.status = RepoStatus.EMBEDDING
+    await repo.save()
+    log_mem("Embedding generation")
+
     from app.ml.embedding_pipeline import generate_embeddings
     from app.ml.embedder import get_embedder
 
-    vectors, embed_stats = generate_embeddings(chunks)
+    # Delegate CPU-bound embedding generation to thread pool
+    vectors, embed_stats = await asyncio.to_thread(generate_embeddings, chunks)
     embedder = get_embedder()
     logger.info(
         "[{id}] Embeddings shape: {s}  ({model})",
@@ -145,6 +173,10 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     # ---------------------------------------------------------------- #
     # Step 7 — FAISS index
     # ---------------------------------------------------------------- #
+    repo.status = RepoStatus.INDEXING
+    await repo.save()
+    log_mem("Indexing vector store")
+
     from app.vector_store.faiss_store import FAISSStore
 
     index_path = settings.VECTOR_STORE_DIR / repo_id
@@ -152,6 +184,10 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     store.build(vectors, model_name=embedder.model_name)
     store.save()
     logger.info("[{id}] FAISS index saved → {path}", id=repo_id, path=str(index_path))
+
+    # Free vector memory immediately
+    del vectors
+    gc.collect()
 
     # ---------------------------------------------------------------- #
     # Step 8 — Metadata sidecar (MetadataStore)
