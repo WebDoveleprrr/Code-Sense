@@ -47,6 +47,9 @@ async def connect_db() -> None:
     from app.models.repository import RepositoryDocument
     from app.models.chunk import ChunkDocument
     from app.models.search_log import SearchLogDocument
+    from app.models.dependency_graph import DependencyGraphDocument
+    from app.models.review_report import ReviewReportDocument
+    from app.models.user import UserDocument
 
     await init_beanie(
         database=_database,
@@ -54,6 +57,9 @@ async def connect_db() -> None:
             RepositoryDocument,
             ChunkDocument,
             SearchLogDocument,
+            DependencyGraphDocument,
+            ReviewReportDocument,
+            UserDocument,
         ],
     )
 

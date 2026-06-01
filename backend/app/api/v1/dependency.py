@@ -3,7 +3,7 @@
 CodeSense — Dependency Graph Endpoint
 """
 from __future__ import annotations
-from typing import Dict, List
+from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from app.services.dependency_service import DependencyService
@@ -16,12 +16,17 @@ class DependencyNode(BaseModel):
     label: str
     language: str
     file_path: str
+    type: str = "file"
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    symbol_name: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 class DependencyEdge(BaseModel):
     source: str
     target: str
-    type: str   # import | call | inherit
+    type: str   # import | calls | references | contains
 
 
 class DependencyGraphResponse(BaseModel):

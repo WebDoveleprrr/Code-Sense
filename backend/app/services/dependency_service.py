@@ -29,9 +29,31 @@ class DependencyService:
         if repo is None:
             raise NotFoundError(f"Repository '{repo_id}' not found.")
 
-        from app.ml.dependency_parser import parse_dependencies
+        from app.services.impact_service import ImpactService
+        impact_svc = ImpactService()
+        graph_doc = await impact_svc.get_or_build_graph(repo_id)
 
-        nodes, edges = await parse_dependencies(repo)
+        nodes = []
+        for n in graph_doc.nodes:
+            nodes.append({
+                "id": n["id"],
+                "label": n["label"],
+                "language": n.get("language", "unknown"),
+                "file_path": n.get("file_path", n["id"]),
+                "type": n.get("type", "file"),
+                "start_line": n.get("start_line"),
+                "end_line": n.get("end_line"),
+                "symbol_name": n.get("symbol_name"),
+                "metadata": n.get("metadata")
+            })
+
+        edges = []
+        for e in graph_doc.edges:
+            edges.append({
+                "source": e["source"],
+                "target": e["target"],
+                "type": e["type"]
+            })
         elapsed_ms = (time.perf_counter() - t0) * 1_000
 
         logger.info(

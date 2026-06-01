@@ -86,6 +86,7 @@ async def generate_explanation(
     *,
     file_path: Optional[str] = None,
     symbol_name: Optional[str] = None,
+    metadata: Optional[dict] = None,
     provider: Optional[str] = None,
 ) -> str:
     """
@@ -96,6 +97,7 @@ async def generate_explanation(
         language:     Programming language identifier (python, js, etc.).
         file_path:    Source file path for context (optional).
         symbol_name:  Function/class name if known (optional).
+        metadata:     Tree-sitter parsed metadata of the file (optional).
         provider:     Optional LLM provider override.
 
     Returns:
@@ -109,6 +111,7 @@ async def generate_explanation(
         language=language,
         file_path=file_path,
         symbol_name=symbol_name,
+        metadata=metadata,
     )
 
     logger.info(

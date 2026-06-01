@@ -28,6 +28,8 @@ from app.schemas.ingestion import (
     RepoSummaryResponse,
 )
 from app.services.ingestion_service import IngestionService
+from app.core.auth import get_current_user
+from app.models.user import UserDocument
 
 router = APIRouter()
 
@@ -109,10 +111,12 @@ async def ingest_github_repo(
     payload: GitHubIngestRequest,
     background_tasks: BackgroundTasks,
     service: IngestionService = Depends(IngestionService),
+    current_user: UserDocument = Depends(get_current_user),
 ) -> IngestStartedResponse:
     repo_doc = await service.create_github_repo_record(
         github_url=payload.github_url,
         branch=payload.branch,
+        user_id=str(current_user.id),
     )
     background_tasks.add_task(service.process_github_repo, str(repo_doc.id))
     return IngestStartedResponse(
@@ -131,6 +135,7 @@ async def ingest_zip_repo(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     service: IngestionService = Depends(IngestionService),
+    current_user: UserDocument = Depends(get_current_user),
 ) -> IngestStartedResponse:
     if not file.filename or not file.filename.endswith(".zip"):
         raise UploadError("Only .zip archives are accepted.")
@@ -159,7 +164,7 @@ async def ingest_zip_repo(
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid or corrupt ZIP archive.")
 
-    repo_doc = await service.create_zip_repo_record(file)
+    repo_doc = await service.create_zip_repo_record(file, user_id=str(current_user.id))
     background_tasks.add_task(service.process_zip_repo, str(repo_doc.id))
     return IngestStartedResponse(
         message="ZIP repository ingestion started.",
@@ -178,12 +183,16 @@ async def ingest_zip_repo(
 )
 async def list_repositories(
     status_filter: Optional[str] = Query(None, alias="status"),
+    current_user: UserDocument = Depends(get_current_user),
 ) -> List[RepoSummaryResponse]:
-    query = RepositoryDocument.find()
+    query = RepositoryDocument.find(RepositoryDocument.user_id == str(current_user.id))
     if status_filter:
         try:
             s = RepoStatus(status_filter)
-            query = RepositoryDocument.find(RepositoryDocument.status == s)
+            query = RepositoryDocument.find(
+                RepositoryDocument.user_id == str(current_user.id),
+                RepositoryDocument.status == s
+            )
         except ValueError:
             pass
     docs = await query.sort("-created_at").to_list()
@@ -195,9 +204,12 @@ async def list_repositories(
     response_model=RepoDetailResponse,
     summary="Get repository details including parse statistics",
 )
-async def get_repository(repo_id: str) -> RepoDetailResponse:
+async def get_repository(
+    repo_id: str,
+    current_user: UserDocument = Depends(get_current_user),
+) -> RepoDetailResponse:
     doc = await RepositoryDocument.get(repo_id)
-    if doc is None:
+    if doc is None or doc.user_id != str(current_user.id):
         raise NotFoundError(f"Repository '{repo_id}' not found.")
     return _doc_to_detail(doc)
 
@@ -210,9 +222,12 @@ async def get_repository(repo_id: str) -> RepoDetailResponse:
     "/{repo_id}/files",
     summary="List parsed file summaries for a repository",
 )
-async def list_repo_files(repo_id: str):
+async def list_repo_files(
+    repo_id: str,
+    current_user: UserDocument = Depends(get_current_user),
+):
     doc = await RepositoryDocument.get(repo_id)
-    if doc is None:
+    if doc is None or doc.user_id != str(current_user.id):
         raise NotFoundError(f"Repository '{repo_id}' not found.")
     files = (doc.repo_metadata or {}).get("files", [])
     return {"repo_id": repo_id, "total": len(files), "files": files}
@@ -229,9 +244,10 @@ async def list_repo_chunks(
     chunk_type: Optional[str] = Query(None, description="Filter by chunk_type"),
     limit: int = Query(50, ge=1, le=500),
     skip: int = Query(0, ge=0),
+    current_user: UserDocument = Depends(get_current_user),
 ) -> List[ChunkResponse]:
     doc = await RepositoryDocument.get(repo_id)
-    if doc is None:
+    if doc is None or doc.user_id != str(current_user.id):
         raise NotFoundError(f"Repository '{repo_id}' not found.")
 
     query = ChunkDocument.find(ChunkDocument.repo_id == repo_id)
@@ -256,6 +272,10 @@ async def list_repo_chunks(
 async def delete_repository(
     repo_id: str,
     service: IngestionService = Depends(IngestionService),
+    current_user: UserDocument = Depends(get_current_user),
 ):
+    doc = await RepositoryDocument.get(repo_id)
+    if doc is None or doc.user_id != str(current_user.id):
+        raise NotFoundError(f"Repository '{repo_id}' not found.")
     await service.delete_repo(repo_id)
     return {"success": True, "message": f"Repository '{repo_id}' deleted."}

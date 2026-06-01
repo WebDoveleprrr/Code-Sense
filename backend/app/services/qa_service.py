@@ -36,6 +36,27 @@ DEFAULT_MAX_CONTEXT_CHARS: int = 6_000
 DEFAULT_MIN_SCORE: float = 0.10
 
 
+async def expand_query(question: str, provider: Optional[str] = None) -> str:
+    """Expand the user query using LLM for better retrieval recall."""
+    from app.ml.llm_client import complete
+    system_prompt = (
+        "You are a search query expansion assistant for codebase search. "
+        "Generate 3-4 alternative search terms, synonyms, functions, or concepts "
+        "related to the query. Keep it extremely brief and output only the expanded terms space-separated."
+    )
+    try:
+        expansion = await complete(
+            system_prompt=system_prompt,
+            user_prompt=f"Expand this codebase search query: {question}",
+            provider=provider
+        )
+        expanded = f"{question} {expansion.strip()}"
+        return expanded
+    except Exception as e:
+        logger.warning("Query expansion failed: {err}", err=str(e))
+        return question
+
+
 class QAService:
     """
     Orchestrates the full RAG pipeline for repository Q&A.
@@ -84,13 +105,19 @@ class QAService:
             )
 
         # ---------------------------------------------------------------- #
+        # Step 0: Query expansion
+        # ---------------------------------------------------------------- #
+        expanded_query = await expand_query(question, provider=provider)
+        logger.info("[QA] Expanded query from '{q}' to '{eq}'", q=question, eq=expanded_query)
+
+        # ---------------------------------------------------------------- #
         # Step 1: Semantic retrieval (fetch extra candidates for re-ranking)
         # ---------------------------------------------------------------- #
         retrieval_k = min(top_k * 3, 30)  # fetch 3× for re-ranker
         retrieval_svc = RetrievalService()
         retrieval_result = await retrieval_svc.retrieve(
             repo_id=repo_id,
-            query=question,
+            query=expanded_query,
             top_k=retrieval_k,
             language_filter=language_filter,
             min_score=min_score,

@@ -10,6 +10,17 @@ import QAChat from "./pages/QAChat";
 import ExplainCode from "./pages/ExplainCode";
 import DependencyGraph from "./pages/DependencyGraph";
 import Architecture from "./pages/Architecture";
+import Login from "./pages/Login";
+import ImpactAnalysis from "./pages/ImpactAnalysis";
+import AIReview from "./pages/AIReview";
+
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem("access_token");
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
 
 export default function App() {
   return (
@@ -32,18 +43,30 @@ export default function App() {
           },
         }}
       />
-      <AppShell>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/upload" element={<UploadPage />} />
-          <Route path="/search" element={<SemanticSearch />} />
-          <Route path="/qa" element={<QAChat />} />
-          <Route path="/explain" element={<ExplainCode />} />
-          <Route path="/graph" element={<DependencyGraph />} />
-          <Route path="/architecture" element={<Architecture />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AppShell>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/upload" element={<UploadPage />} />
+                  <Route path="/search" element={<SemanticSearch />} />
+                  <Route path="/qa" element={<QAChat />} />
+                  <Route path="/explain" element={<ExplainCode />} />
+                  <Route path="/graph" element={<DependencyGraph />} />
+                  <Route path="/impact" element={<ImpactAnalysis />} />
+                  <Route path="/review" element={<AIReview />} />
+                  <Route path="/architecture" element={<Architecture />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
     </BrowserRouter>
   );
 }

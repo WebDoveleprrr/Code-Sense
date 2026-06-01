@@ -168,6 +168,13 @@ async def complete(
     raise LLMUnavailableError(f"Local LLM unavailable. (Unsupported provider: {p})")
 
 
+def normalize_model_name(name: str) -> str:
+    """Normalize model names by lowercasing, stripping registry prefix, and trimming default tag."""
+    name = name.lower().split('/')[-1]
+    if name.endswith(':latest'):
+        name = name[:-7]
+    return name
+
 async def validate_startup() -> None:
     """Validate that Ollama is running and the required model is loaded."""
     settings = get_settings()
@@ -182,26 +189,61 @@ async def validate_startup() -> None:
         model = os.getenv("OLLAMA_MODEL", settings.OLLAMA_MODEL)
         logger.info("Validating Ollama connection at {base_url} ...", base_url=base_url)
         client = _get_client()
+        response_status = None
+        available_models = []
         try:
-            response = await client.get(f"{base_url}/api/tags", timeout=2.0)
+            # Increased timeout to 10.0 seconds to prevent early drops
+            response = await client.get(f"{base_url}/api/tags", timeout=10.0)
+            response_status = response.status_code
             if response.status_code != 200:
                 raise LLMUnavailableError(f"Ollama returned status code {response.status_code}")
             
             data = response.json()
-            models = [m.get("name") for m in data.get("models", [])]
+            available_models = [m.get("name") for m in data.get("models", [])]
+            
+            # Normalize and match model tags
+            target_norm = normalize_model_name(model)
             model_loaded = False
-            for m in models:
-                if m == model or m == f"{model}:latest" or model == f"{m}:latest" or m.startswith(model.split(':')[0]):
+            for m in available_models:
+                if normalize_model_name(m) == target_norm:
                     model_loaded = True
                     break
             
             if not model_loaded:
-                raise LLMUnavailableError(f"Model '{model}' is not loaded in Ollama. Available: {models}")
+                logger.error(
+                    "LLM Startup Health-Check Failed:\n"
+                    "  Provider: {provider}\n"
+                    "  Base URL: {base_url}\n"
+                    "  Configured Model: {model}\n"
+                    "  Available Models: {available}\n"
+                    "  Response Status: {status}",
+                    provider=provider,
+                    base_url=base_url,
+                    model=model,
+                    available=available_models,
+                    status=response_status
+                )
+                raise LLMUnavailableError(f"Model '{model}' is not loaded in Ollama. Available: {available_models}")
             
             logger.info("Ollama provider active")
             logger.info("Model loaded: {model}", model=model)
         except Exception as exc:
-            raise LLMUnavailableError(f"Ollama connection validation failed: {exc}")
+            if not isinstance(exc, LLMUnavailableError):
+                logger.error(
+                    "LLM Startup Health-Check Failed:\n"
+                    "  Provider: {provider}\n"
+                    "  Base URL: {base_url}\n"
+                    "  Configured Model: {model}\n"
+                    "  Available Models: {available}\n"
+                    "  Response Status: {status}",
+                    provider=provider,
+                    base_url=base_url,
+                    model=model,
+                    available=available_models,
+                    status=response_status
+                )
+                raise LLMUnavailableError(f"Ollama connection validation failed: {exc}")
+            raise
     elif provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", settings.OPENAI_API_KEY)
         if not api_key:

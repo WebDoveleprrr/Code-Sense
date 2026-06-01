@@ -72,7 +72,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     if not parsed_files:
         raise ValueError("No supported source files found in the repository.")
 
-    if len(parsed_files) > 100:
+    if len(parsed_files) > 5000:
         raise ValueError(
             f"Repository exceeds the maximum limit of 100 files (found {len(parsed_files)}). "
             "Please upload a smaller repository for the Render free-tier environment."
@@ -144,7 +144,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     if not chunks:
         raise ValueError("Chunking produced zero chunks — repository may be empty.")
 
-    if len(chunks) > 500:
+    if len(chunks) > 25000:
         raise ValueError(
             f"Repository exceeds the maximum limit of 500 chunks (found {len(chunks)}). "
             "Please upload a smaller repository for the Render free-tier environment."

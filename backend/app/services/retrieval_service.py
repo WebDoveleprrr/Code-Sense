@@ -31,6 +31,8 @@ from app.models.repository import RepositoryDocument, RepoStatus
 from app.vector_store.faiss_store import FAISSStore
 from app.vector_store.metadata_store import MetadataStore
 
+# Global cache: repo_id -> (updated_at_timestamp, BM25Okapi, list of ChunkDocument)
+_bm25_cache: Dict[str, tuple] = {}
 
 # ---------------------------------------------------------------------------
 # Result schema
@@ -114,20 +116,159 @@ class RetrievalService:
 
         # -- Step 3: Hydrate metadata --
         if use_metadata_cache:
-            results = await _hydrate_from_metadata_store(
+            faiss_results = await _hydrate_from_metadata_store(
                 repo_id=repo_id,
                 faiss_index_path=repo.faiss_index_path,
                 faiss_ids=faiss_ids,
                 scores=raw_scores,
             )
         else:
-            results = await _hydrate_from_mongodb(
+            faiss_results = await _hydrate_from_mongodb(
                 repo_id=repo_id,
                 faiss_ids=faiss_ids,
                 scores=raw_scores,
             )
 
-        # -- Step 4: Post-filters --
+        # -- Step 3.5: BM25 Retrieval --
+        cached_val = _bm25_cache.get(repo_id)
+        if cached_val and cached_val[0] == repo.updated_at:
+            bm25, all_chunks = cached_val[1], cached_val[2]
+        else:
+            all_chunks = await ChunkDocument.find(ChunkDocument.repo_id == repo_id).to_list()
+            tokenized_corpus = [c.content.lower().split() for c in all_chunks]
+            if tokenized_corpus:
+                from rank_bm25 import BM25Okapi
+                bm25 = BM25Okapi(tokenized_corpus)
+                _bm25_cache[repo_id] = (repo.updated_at, bm25, all_chunks)
+            else:
+                bm25 = None
+
+        tokenized_query = query.lower().split()
+        bm25_results = []
+        if bm25 and tokenized_query:
+            bm25_scores = bm25.get_scores(tokenized_query)
+            
+            for chunk_idx, score in enumerate(bm25_scores):
+                if score > 0:
+                    chunk = all_chunks[chunk_idx]
+                    bm25_results.append({
+                        "chunk_id": str(chunk.id),
+                        "faiss_id": chunk.faiss_id,
+                        "file_path": chunk.file_path,
+                        "language": chunk.language,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "content": chunk.content,
+                        "chunk_type": chunk.chunk_type,
+                        "symbol_name": chunk.symbol_name,
+                        "score": float(score),
+                    })
+            bm25_results.sort(key=lambda x: x["score"], reverse=True)
+            bm25_results = bm25_results[:fetch_k]
+
+        # -- Step 4: Reciprocal Rank Fusion (RRF) & Candidate Merge --
+        faiss_ranks = {r.get("chunk_id") or str(r.get("faiss_id")): idx + 1 for idx, r in enumerate(faiss_results)}
+        bm25_ranks = {r.get("chunk_id") or str(r.get("faiss_id")): idx + 1 for idx, r in enumerate(bm25_results)}
+
+        merged_candidates = {}
+        max_faiss_score = max([r["score"] for r in faiss_results]) if faiss_results else 1.0
+        max_bm25_score = max([r["score"] for r in bm25_results]) if bm25_results else 1.0
+
+        for r in faiss_results:
+            cid = r.get("chunk_id") or str(r.get("faiss_id"))
+            normalized_semantic = r["score"] / (max_faiss_score or 1.0)
+            merged_candidates[cid] = {
+                **r,
+                "lexical_score": 0.0,
+                "semantic_score": float(r["score"]),
+                "normalized_semantic": normalized_semantic,
+                "normalized_lexical": 0.0,
+            }
+
+        for r in bm25_results:
+            cid = r.get("chunk_id") or str(r.get("faiss_id"))
+            normalized_lexical = r["score"] / (max_bm25_score or 1.0)
+            if cid in merged_candidates:
+                merged_candidates[cid]["lexical_score"] = float(r["score"])
+                merged_candidates[cid]["normalized_lexical"] = normalized_lexical
+            else:
+                merged_candidates[cid] = {
+                    **r,
+                    "lexical_score": float(r["score"]),
+                    "semantic_score": 0.0,
+                    "normalized_semantic": 0.0,
+                    "normalized_lexical": normalized_lexical,
+                }
+
+        # Calculate RRF Score
+        rrf_k = 60
+        for cid, c in merged_candidates.items():
+            rank_semantic = faiss_ranks.get(cid)
+            rank_lexical = bm25_ranks.get(cid)
+            rrf_score = 0.0
+            if rank_semantic is not None:
+                rrf_score += 1.0 / (rrf_k + rank_semantic)
+            if rank_lexical is not None:
+                rrf_score += 1.0 / (rrf_k + rank_lexical)
+            c["rrf_score"] = rrf_score
+
+        # Sort by RRF score to select top candidates for cross-encoder re-ranking
+        unique_candidates = list(merged_candidates.values())
+        unique_candidates.sort(key=lambda x: x.get("rrf_score", 0.0), reverse=True)
+
+        settings = get_settings()
+        enable_reranking = getattr(settings, "ENABLE_RERANKING", True)
+
+        if enable_reranking and unique_candidates:
+            try:
+                from sentence_transformers import CrossEncoder
+                import math
+                global _cross_encoder
+                if "_cross_encoder" not in globals() or _cross_encoder is None:
+                    # Upgrade from ms-marco-MiniLM-L-6-v2 to BAAI/bge-reranker-base
+                    _cross_encoder = CrossEncoder("BAAI/bge-reranker-base")
+                
+                # Re-rank only the top candidates to optimize performance
+                rerank_candidates = unique_candidates[:top_k * 3]
+                pairs = [(query, c["content"]) for c in rerank_candidates]
+                rerank_scores = _cross_encoder.predict(pairs)
+                
+                for idx, score in enumerate(rerank_scores):
+                    # Sigmoid function to normalize the score to [0, 1] range
+                    sig_score = 1.0 / (1.0 + math.exp(-float(score)))
+                    c = rerank_candidates[idx]
+                    c["rerank_score"] = float(score)
+                    c["final_score"] = sig_score
+                    c["score"] = sig_score
+                    c["ranking_explanation"] = (
+                        f"RRF score: {c.get('rrf_score', 0.0):.4f}. "
+                        f"Re-ranked using BAAI/bge-reranker-base."
+                    )
+                    c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
+                
+                # Sort by new rerank scores
+                rerank_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+                # Keep re-ranked candidates plus rest of unique candidates
+                unique_candidates = rerank_candidates + unique_candidates[top_k * 3:]
+            except Exception as e:
+                logger.error(f"Re-ranking failed: {e}. Falling back to combined scores.")
+                for c in unique_candidates:
+                    c["rerank_score"] = 0.0
+                    c["final_score"] = c["rrf_score"]
+                    c["score"] = c["final_score"]
+                    c["ranking_explanation"] = f"Fallback RRF score (RRF score: {c.get('rrf_score', 0.0):.4f})."
+                    c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
+        else:
+            for c in unique_candidates:
+                c["rerank_score"] = 0.0
+                c["final_score"] = c["rrf_score"]
+                c["score"] = c["final_score"]
+                c["ranking_explanation"] = f"Reciprocal Rank Fusion score (RRF score: {c.get('rrf_score', 0.0):.4f})."
+                c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
+
+        results = unique_candidates
+
+        # -- Step 4.5: Post-filters --
         if language_filter:
             results = [r for r in results if r["language"] == language_filter]
         if chunk_type_filter:

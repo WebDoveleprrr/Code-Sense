@@ -36,6 +36,7 @@ class RepositoryDocument(Document):
     # Identifiers
     name: str
     owner: Optional[str] = None
+    user_id: Optional[str] = None  # Associated authenticated user id (UserDocument ID)
     source: RepoSource
     github_url: Optional[str] = None
     zip_filename: Optional[str] = None

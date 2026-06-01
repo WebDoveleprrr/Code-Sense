@@ -11,13 +11,44 @@ const api = axios.create({
 
 // Request interceptor
 api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("access_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 
-// Response interceptor — normalize errors
+// Response interceptor — normalize errors & handle token refresh
 api.interceptors.response.use(
   (res) => res.data,
-  (err) => {
+  async (err) => {
+    const originalRequest = err.config;
+    if (err.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      const refreshToken = localStorage.getItem("refresh_token");
+      if (refreshToken) {
+        try {
+          const resp = await axios.post(
+            `${BASE_URL}/auth/refresh`,
+            { refresh_token: refreshToken },
+            { headers: { "Content-Type": "application/json" } }
+          );
+          const { access_token, refresh_token } = resp.data;
+          localStorage.setItem("access_token", access_token);
+          localStorage.setItem("refresh_token", refresh_token);
+          originalRequest.headers.Authorization = `Bearer ${access_token}`;
+          // Since response interceptor returns data directly (res => res.data), we should handle call retry appropriately
+          const retryResponse = await api(originalRequest);
+          return retryResponse;
+        } catch (refreshErr) {
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("refresh_token");
+          localStorage.removeItem("user");
+          window.location.href = "/login";
+          return Promise.reject(refreshErr);
+        }
+      }
+    }
     const msg =
       err.response?.data?.detail ||
       err.response?.data?.message ||
@@ -96,6 +127,21 @@ export const dependencyApi = {
   buildGraph: (repoId) => api.get(`/dependency/${repoId}`),
 };
 
+// ─── Impact Analysis ─────────────────────────────────────────────────────────
+
+export const impactApi = {
+  /** Run impact analysis for a file/symbol */
+  analyze: (payload) => api.post("/impact/analyze", payload),
+  rebuild: (repoId) => api.post(`/impact/rebuild?repo_id=${repoId}`),
+};
+
+// ─── AI Code Review ──────────────────────────────────────────────────────────
+
+export const reviewApi = {
+  /** Run AI code review on the repository */
+  analyze: (payload) => api.post("/review/analyze", payload),
+};
+
 // ─── Architecture ─────────────────────────────────────────────────────────────
 
 export const architectureApi = {
@@ -110,6 +156,14 @@ export const architectureApi = {
 
 export const healthApi = {
   ping: () => api.get("/health"),
+};
+
+// ─── Authentication ──────────────────────────────────────────────────────────
+
+export const authApi = {
+  loginGoogle: (idToken) => api.post("/auth/google", { id_token: idToken }),
+  refresh: (refreshToken) => api.post("/auth/refresh", { refresh_token: refreshToken }),
+  getMe: () => api.get("/auth/me"),
 };
 
 export default api;

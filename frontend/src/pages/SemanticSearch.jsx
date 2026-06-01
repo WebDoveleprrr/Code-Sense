@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Search, Filter, Clock, Code2, Layers, SlidersHorizontal } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useSearch } from "../hooks/useSearch";
 import { useRepository } from "../hooks/useRepositories";
 import {

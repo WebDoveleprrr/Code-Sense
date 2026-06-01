@@ -32,7 +32,7 @@ class IngestionService:
     # ---------------------------------------------------------------- #
 
     async def create_github_repo_record(
-        self, github_url: str, branch: str = "main"
+        self, github_url: str, branch: str = "main", user_id: Optional[str] = None
     ) -> RepositoryDocument:
         """Persist a pending RepositoryDocument for a GitHub URL."""
         try:
@@ -43,6 +43,7 @@ class IngestionService:
         doc = RepositoryDocument(
             name=name,
             owner=owner,
+            user_id=user_id,
             source=RepoSource.GITHUB,
             github_url=github_url,
             status=RepoStatus.PENDING,
@@ -75,7 +76,7 @@ class IngestionService:
     # ZIP Ingestion
     # ---------------------------------------------------------------- #
 
-    async def create_zip_repo_record(self, file: UploadFile) -> RepositoryDocument:
+    async def create_zip_repo_record(self, file: UploadFile, user_id: Optional[str] = None) -> RepositoryDocument:
         """Save the uploaded ZIP and create a pending RepositoryDocument."""
         upload_path = self.settings.UPLOAD_DIR / (file.filename or "upload.zip")
 
@@ -89,6 +90,7 @@ class IngestionService:
         name = Path(file.filename or "repo").stem
         doc = RepositoryDocument(
             name=name,
+            user_id=user_id,
             source=RepoSource.ZIP,
             zip_filename=str(upload_path),
             status=RepoStatus.PENDING,

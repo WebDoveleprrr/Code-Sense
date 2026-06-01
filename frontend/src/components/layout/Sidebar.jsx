@@ -12,6 +12,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  LogOut,
+  Shuffle,
+  ShieldAlert,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -21,6 +24,8 @@ const NAV_ITEMS = [
   { to: "/qa", icon: MessageSquare, label: "Repo Q&A" },
   { to: "/explain", icon: Zap, label: "Explain Code" },
   { to: "/graph", icon: GitBranch, label: "Dependency Graph" },
+  { to: "/impact", icon: Shuffle, label: "Impact Analysis" },
+  { to: "/review", icon: ShieldAlert, label: "AI Code Review" },
   { to: "/architecture", icon: Building2, label: "Architecture" },
 ];
 
@@ -96,11 +101,55 @@ export default function Sidebar() {
       {/* Footer */}
       <div className="px-3 py-4 border-t border-ink-600">
         {!collapsed ? (
-          <div className="text-xs text-frost-dim font-mono opacity-50">
-            AI-Powered Repo Intel
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white font-bold text-sm uppercase flex-shrink-0">
+                {(() => {
+                  const user = JSON.parse(localStorage.getItem("user") || "null");
+                  return user?.picture ? (
+                    <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />
+                  ) : (
+                    user?.name?.[0] || "U"
+                  );
+                })()}
+              </div>
+              <div className="overflow-hidden">
+                {(() => {
+                  const user = JSON.parse(localStorage.getItem("user") || "null");
+                  return (
+                    <>
+                      <div className="text-sm font-semibold text-frost truncate">{user?.name || "Developer"}</div>
+                      <div className="text-xs text-frost-dim truncate">{user?.email || "developer@codesense.ai"}</div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("access_token");
+                localStorage.removeItem("refresh_token");
+                localStorage.removeItem("user");
+                window.location.href = "/login";
+              }}
+              className="mt-2 w-full px-3 py-1.5 text-xs text-red-400 hover:text-red-300 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 rounded-lg transition-all font-mono"
+            >
+              Sign Out
+            </button>
           </div>
         ) : (
-          <div className="w-2 h-2 rounded-full bg-acid mx-auto status-dot-ready" />
+          <button
+            onClick={() => {
+              localStorage.removeItem("access_token");
+              localStorage.removeItem("refresh_token");
+              localStorage.removeItem("user");
+              window.location.href = "/login";
+            }}
+            title="Sign Out"
+            className="w-8 h-8 mx-auto flex items-center justify-center rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/20 transition-all"
+          >
+            <LogOut size={16} />
+          </button>
         )}
       </div>
     </aside>

@@ -15,6 +15,9 @@ from app.api.v1 import (
     architecture,
     health,
     vector_store,
+    impact,
+    review,
+    auth,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -68,4 +71,22 @@ api_router.include_router(
     vector_store.router,
     prefix="/vector-store",
     tags=["Vector Store"],
+)
+
+api_router.include_router(
+    impact.router,
+    prefix="/impact",
+    tags=["Impact Analysis"],
+)
+
+api_router.include_router(
+    review.router,
+    prefix="/review",
+    tags=["AI Code Review"],
+)
+
+api_router.include_router(
+    auth.router,
+    prefix="/auth",
+    tags=["Authentication"],
 )

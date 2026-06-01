@@ -19,30 +19,126 @@ Your task is to answer the user's question using the provided codebase context.
 
 Strict Rules for Citations & Answer Quality:
 1. Base your answer strictly on the provided context. If the code context does not contain enough information to answer, state this clearly.
-2. In-text Citations: Whenever you reference code or explain logic, cite the source file using brackets and index, e.g. `[1]` or `[2]`.
-3. Sources Section: You MUST end your response with a markdown header:
-   ### Sources
-   Followed by a numbered list of the sources used to answer the question:
-   1. `file_path` (Lines X-Y)
-4. Be technical, precise, and format all code blocks with proper syntax highlighting.
+2. You MUST end your response with a section named exactly "Sources:" (with no header hash or other decorations) followed by one citation per line in the format:
+[file_name:Lstart-Lend]
+
+Example ending:
+Sources:
+[utils.py:L12-L35]
+[main.py:L40-L60]
+
+3. Be technical, precise, and format all code blocks with proper syntax highlighting.
 """
 
 SYSTEM_PROMPT_EXPLAIN = """\
 You are CodeSense, an expert code reviewer and technical educator.
 Your task is to explain the provided code snippet in a highly structured, professional format.
 
-Your explanation MUST follow this exact structure:
-### 1. High-Level Overview
+Your explanation MUST cover the codebase context and be organized under these exact headers:
+### Overview
 - A 1-2 sentence description of the code snippet's primary purpose and responsibility.
 
-### 2. Technical Deep Dive
-- A line-by-line or block-by-block explanation of the logic, control flow, helper methods, and variables.
+### Main Components
+- Breakdown of classes, modules, variables, and overall architecture of the snippet.
 
-### 3. Complexity Analysis
+### Execution Flow
+- Step-by-step control flow and logic progression when the snippet is run.
+
+### Key Functions
+- Explanations of core methods, functions, and algorithms in this snippet.
+
+### Complexity
 - Estimate the Time Complexity (Big O) and Space Complexity (Big O) of the snippet with brief justifications.
 
-### 4. Recommendations & Best Practices
-- Discuss potential bugs, edge cases, exception handling, or modern style recommendations (e.g. refactoring opportunities).
+### Risks
+- Discuss potential bugs, edge cases, vulnerability patterns, concurrency issues, or error handling gaps.
+
+### Improvements
+- Actionable recommendations, style guidelines, refactoring opportunities, or optimizations.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Q&A / RAG prompt
+# ---------------------------------------------------------------------------
+
+def build_qa_prompt(question: str, context: str) -> str:
+    """
+    Build the user-turn message for a repository Q&A RAG call.
+
+    Args:
+        question: The developer's natural-language question.
+        context:  Pre-formatted retrieval context (file headers + code blocks).
+
+    Returns:
+        A single user-turn string to send alongside SYSTEM_PROMPT_QA.
+    """
+    return f"""\
+## Repository Code Context
+
+{context}
+
+---
+
+## Question
+
+{question}
+
+Please answer using only the code context above.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Function / code explanation prompt
+# ---------------------------------------------------------------------------
+
+def build_explanation_prompt(
+    code_snippet: str,
+    language: str,
+    file_path: Optional[str] = None,
+    symbol_name: Optional[str] = None,
+    metadata: Optional[dict] = None,
+) -> str:
+    """
+    Build the user-turn message for a code explanation call.
+    """
+    location = ""
+    if file_path:
+        location = f"**File:** `{file_path}`"
+        if symbol_name:
+            location += f"  |  **Symbol:** `{symbol_name}`"
+        location += "\n\n"
+
+    metadata_context = ""
+    if metadata:
+        classes = [c.get("name") for c in metadata.get("classes", [])]
+        funcs = [f.get("name") for f in metadata.get("functions", [])]
+        imports = [imp.get("module") for imp in metadata.get("imports", [])]
+        comments = [c.get("text") for c in metadata.get("comments", []) if c.get("type") != "docstring"]
+        docstrings = [c.get("text") for c in metadata.get("comments", []) if c.get("type") == "docstring"]
+        
+        metadata_parts = []
+        if classes:
+            metadata_parts.append(f"- **Classes defined in file:** {', '.join(classes)}")
+        if funcs:
+            metadata_parts.append(f"- **Functions defined in file:** {', '.join(funcs)}")
+        if imports:
+            short_imports = [imp.strip() for imp in imports[:10]]
+            metadata_parts.append(f"- **File Imports:** {'; '.join(short_imports)}")
+        if docstrings:
+            metadata_parts.append(f"- **File/Symbol Docstrings:** {'; '.join(docstrings[:5])}")
+        if comments:
+            metadata_parts.append(f"- **Extracted Comments:** {'; '.join(comments[:5])}")
+            
+        if metadata_parts:
+            metadata_context = "### Tree-Sitter Extracted File Context:\n" + "\n".join(metadata_parts) + "\n\n"
+
+    return f"""\
+{location}{metadata_context}```{language}
+{code_snippet}
+```
+
+Please explain this {language} code snippet, taking into account the Tree-Sitter extracted file context.
 """
 
 SYSTEM_PROMPT_ARCHITECTURE = """\
@@ -97,33 +193,7 @@ Please answer using only the code context above.
 """
 
 
-# ---------------------------------------------------------------------------
-# Function / code explanation prompt
-# ---------------------------------------------------------------------------
-
-def build_explanation_prompt(
-    code_snippet: str,
-    language: str,
-    file_path: Optional[str] = None,
-    symbol_name: Optional[str] = None,
-) -> str:
-    """
-    Build the user-turn message for a code explanation call.
-    """
-    location = ""
-    if file_path:
-        location = f"**File:** `{file_path}`"
-        if symbol_name:
-            location += f"  |  **Symbol:** `{symbol_name}`"
-        location += "\n\n"
-
-    return f"""\
-{location}```{language}
-{code_snippet}
-```
-
-Please explain this {language} code snippet.
-"""
+# Deleted duplicate build_explanation_prompt
 
 
 # ---------------------------------------------------------------------------

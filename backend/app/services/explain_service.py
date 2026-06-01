@@ -91,6 +91,34 @@ class ExplainService:
         )
 
         # ---------------------------------------------------------------- #
+        # Tree-Sitter AST context extraction
+        # ---------------------------------------------------------------- #
+        full_content = ""
+        try:
+            from app.core.config import get_settings
+            settings = get_settings()
+            repo_dir = settings.UPLOAD_DIR / str(repo.id)
+            full_path = repo_dir / file_path
+            if full_path.exists():
+                full_content = full_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+        if not full_content:
+            full_content = code_snippet
+
+        from app.ml.parsers import parse_source
+        parsed_metadata = {}
+        try:
+            parsed_metadata = parse_source({
+                "file_path": file_path,
+                "content": full_content,
+                "language": language
+            })
+        except Exception as exc:
+            logger.warning("Tree-sitter parse failed during explain context generation: {err}", err=str(exc))
+
+        # ---------------------------------------------------------------- #
         # LLM-backed explanation
         # ---------------------------------------------------------------- #
         is_fallback = False
@@ -100,6 +128,7 @@ class ExplainService:
                 language=language,
                 file_path=file_path,
                 symbol_name=symbol_name,
+                metadata=parsed_metadata,
                 provider=provider,
             )
         except Exception as exc:

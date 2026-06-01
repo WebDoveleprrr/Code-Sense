@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         await validate_startup()
     except Exception as exc:
-        logger.error("LLM Startup Validation Failed: {err}", err=str(exc))
+        logger.exception("LLM Startup Validation Failed")
 
     # Database
     from app.db.mongodb import connect_db

@@ -83,7 +83,11 @@ function GraphCanvas({ nodes, edges, onNodeClick }) {
       })
       .on("mouseover", (event, d) => {
         links
-          .attr("stroke", (l) => l.source.id === d.id || l.target.id === d.id ? "rgba(0, 255, 136, 0.8)" : "rgba(255, 255, 255, 0.05)")
+          .attr("stroke", (l) => {
+            if (l.source.id === d.id) return "rgba(0, 255, 136, 0.8)"; // Outgoing (Acid)
+            if (l.target.id === d.id) return "rgba(244, 63, 94, 0.8)"; // Incoming (Rose)
+            return "rgba(255, 255, 255, 0.03)";
+          })
           .attr("stroke-width", (l) => l.source.id === d.id || l.target.id === d.id ? 2.5 : 1);
         
         node.style("opacity", (n) => {
@@ -186,6 +190,10 @@ export default function DependencyGraph() {
   const [graphData, setGraphData] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
 
+  // Search and Filter States
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedType, setSelectedType] = useState("all");
+
   const fetchGraph = useCallback(async () => {
     if (!repoId) return;
     setLoading(true);
@@ -209,18 +217,91 @@ export default function DependencyGraph() {
     setSelectedNode(node);
   }, []);
 
+  // Filter nodes based on search and type
+  const filteredNodes = graphData?.nodes
+    ? graphData.nodes.filter((n) => {
+        const matchesSearch =
+          searchTerm === "" ||
+          n.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          n.label.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesType =
+          selectedType === "all" ||
+          n.type?.toLowerCase() === selectedType.toLowerCase();
+        return matchesSearch && matchesType;
+      })
+    : [];
+
+  const visibleNodeIds = new Set(filteredNodes.map((n) => n.id));
+
+  // Keep edges that connect visible nodes
+  const filteredEdges = graphData?.edges
+    ? graphData.edges.filter((e) => {
+        const sourceId = typeof e.source === "object" ? e.source.id : e.source;
+        const targetId = typeof e.target === "object" ? e.target.id : e.target;
+        return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
+      })
+    : [];
+
+  // Calculate imports and imported-by dynamically for selectedNode
+  const nodeImports = graphData?.edges && selectedNode
+    ? graphData.edges
+        .filter((e) => {
+          const sourceId = typeof e.source === "object" ? e.source.id : e.source;
+          return sourceId === selectedNode.id;
+        })
+        .map((e) => {
+          const targetId = typeof e.target === "object" ? e.target.id : e.target;
+          return targetId;
+        })
+    : [];
+
+  const nodeImportedBy = graphData?.edges && selectedNode
+    ? graphData.edges
+        .filter((e) => {
+          const targetId = typeof e.target === "object" ? e.target.id : e.target;
+          return targetId === selectedNode.id;
+        })
+        .map((e) => {
+          const sourceId = typeof e.source === "object" ? e.source.id : e.source;
+          return sourceId;
+        })
+    : [];
+
   return (
-    <div className="p-8 max-w-7xl mx-auto h-screen flex flex-col">
+    <div className="p-8 max-w-7xl mx-auto h-screen flex flex-col font-sans">
       <SectionHeader
         title="Dependency Graph"
         subtitle="Visual import and dependency mapping across your codebase"
       />
 
       {/* Controls */}
-      <div className="flex items-center gap-3 mb-4 flex-shrink-0">
-        <div className="w-72">
+      <div className="flex flex-wrap items-center gap-4 mb-4 flex-shrink-0 p-4 bg-slate-900/30 border border-slate-800 rounded-2xl">
+        <div className="w-64">
           <RepoSelector value={repoId} onChange={setRepoId} />
         </div>
+
+        {/* Search Box */}
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search nodes..."
+          className="px-4 py-2 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/40 text-sm w-48"
+        />
+
+        {/* Node Type Filter */}
+        <select
+          value={selectedType}
+          onChange={(e) => setSelectedType(e.target.value)}
+          className="px-4 py-2 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/40 text-sm"
+        >
+          <option value="all">All Types</option>
+          <option value="file">File</option>
+          <option value="class">Class</option>
+          <option value="function">Function</option>
+          <option value="method">Method</option>
+        </select>
+
         <Button
           onClick={fetchGraph}
           disabled={!repoId || loading}
@@ -231,10 +312,11 @@ export default function DependencyGraph() {
         >
           Reload
         </Button>
+
         {graphData && (
-          <div className="flex items-center gap-3 text-xs font-mono text-frost-dim">
-            <Badge variant="acid">{graphData.nodes?.length || 0} nodes</Badge>
-            <Badge variant="plasma">{graphData.edges?.length || 0} edges</Badge>
+          <div className="flex items-center gap-3 text-xs font-mono ml-auto">
+            <Badge variant="acid">{filteredNodes.length} nodes</Badge>
+            <Badge variant="plasma">{filteredEdges.length} edges</Badge>
           </div>
         )}
       </div>
@@ -250,16 +332,16 @@ export default function DependencyGraph() {
         {/* Graph */}
         <div className="flex-1 min-h-0">
           {loading ? (
-            <div className="h-full bg-ink-950 rounded-xl border border-ink-600 flex items-center justify-center">
+            <div className="h-full bg-slate-950/20 rounded-2xl border border-slate-800 flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
                 <Spinner size={32} />
-                <p className="text-xs font-mono text-frost-dim">Building dependency graph…</p>
+                <p className="text-xs font-mono text-slate-400 animate-pulse">Building dependency graph…</p>
               </div>
             </div>
-          ) : graphData?.nodes?.length > 0 ? (
+          ) : filteredNodes.length > 0 ? (
             <GraphCanvas
-              nodes={graphData.nodes}
-              edges={graphData.edges || []}
+              nodes={filteredNodes}
+              edges={filteredEdges}
               onNodeClick={handleNodeClick}
             />
           ) : (
@@ -275,61 +357,99 @@ export default function DependencyGraph() {
 
         {/* Selected node info */}
         {selectedNode && (
-          <div className="w-64 flex-shrink-0 animate-slide-up">
-            <Card className="h-full">
-              <div className="flex items-center gap-2 mb-4">
-                <Info size={14} className="text-acid" />
-                <span className="font-mono text-xs font-bold text-acid uppercase tracking-widest">
-                  Node Detail
-                </span>
+          <div className="w-80 flex-shrink-0 animate-slide-up h-full overflow-y-auto">
+            <Card className="h-full flex flex-col space-y-4 border border-slate-800 bg-slate-900/60 backdrop-blur-md p-5 rounded-2xl scrollbar-thin">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  <Info size={14} className="text-purple-400" />
+                  <span className="font-mono text-xs font-bold text-purple-400 uppercase tracking-widest">
+                    Node Metadata
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSelectedNode(null)}
+                  className="text-slate-500 hover:text-rose-400 text-lg transition-colors font-bold"
+                >
+                  &times;
+                </button>
               </div>
 
-              <div className="space-y-3 text-xs font-mono">
+              <div className="space-y-4 text-xs font-mono flex-1 overflow-y-auto pr-1">
                 <div>
-                  <p className="text-frost-dim mb-1">ID / File</p>
-                  <p className="text-frost break-all">{selectedNode.id}</p>
+                  <p className="text-slate-500 font-semibold mb-1 uppercase tracking-wider text-[10px]">Symbol Name</p>
+                  <p className="text-slate-200 text-sm font-bold truncate">{selectedNode.label || selectedNode.id.split('/').pop()}</p>
                 </div>
 
-                {selectedNode.label && selectedNode.label !== selectedNode.id && (
+                <div>
+                  <p className="text-slate-500 font-semibold mb-1 uppercase tracking-wider text-[10px]">Node Type</p>
+                  <span className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[10px] font-bold uppercase">
+                    {selectedNode.type || "file"}
+                  </span>
+                </div>
+
+                <div>
+                  <p className="text-slate-500 font-semibold mb-1 uppercase tracking-wider text-[10px]">Source File</p>
+                  <p className="text-slate-300 break-all leading-relaxed bg-slate-950/50 p-2 border border-slate-800/40 rounded-xl">
+                    {selectedNode.file_path || selectedNode.id}
+                  </p>
+                </div>
+
+                {selectedNode.start_line !== undefined && (
                   <div>
-                    <p className="text-frost-dim mb-1">Label</p>
-                    <p className="text-frost">{selectedNode.label}</p>
+                    <p className="text-slate-500 font-semibold mb-1 uppercase tracking-wider text-[10px]">Line Range</p>
+                    <p className="text-slate-300 text-xs">
+                      L{selectedNode.start_line} – L{selectedNode.end_line}
+                    </p>
                   </div>
                 )}
 
                 {selectedNode.language && (
                   <div>
-                    <p className="text-frost-dim mb-1">Language</p>
-                    <Badge variant="acid">{selectedNode.language}</Badge>
+                    <p className="text-slate-500 font-semibold mb-1 uppercase tracking-wider text-[10px]">Language</p>
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase">
+                      {selectedNode.language}
+                    </span>
                   </div>
                 )}
 
-                {selectedNode.type && (
-                  <div>
-                    <p className="text-frost-dim mb-1">Type</p>
-                    <Badge variant="plasma">{selectedNode.type}</Badge>
+                {/* Imports */}
+                <div>
+                  <p className="text-slate-500 font-semibold mb-1.5 uppercase tracking-wider text-[10px] flex items-center justify-between">
+                    <span>Dependencies / Imports</span>
+                    <span className="text-[9px] text-slate-600 bg-slate-950 px-1.5 py-0.5 rounded">{nodeImports.length}</span>
+                  </p>
+                  <div className="max-h-36 overflow-y-auto space-y-1.5 scrollbar-thin">
+                    {nodeImports.length > 0 ? (
+                      nodeImports.map((imp, idx) => (
+                        <div key={idx} className="p-1.5 bg-slate-950/30 border border-slate-800/40 rounded text-[10px] text-slate-300 truncate font-mono">
+                          &rarr; {imp.split('/').pop()}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[10px] text-slate-600 italic">None detected</div>
+                    )}
                   </div>
-                )}
+                </div>
 
-                {selectedNode.imports?.length > 0 && (
-                  <div>
-                    <p className="text-frost-dim mb-1">Imports ({selectedNode.imports.length})</p>
-                    <ul className="space-y-1 max-h-40 overflow-y-auto">
-                      {selectedNode.imports.map((imp) => (
-                        <li key={imp} className="text-frost-dim truncate">
-                          → {imp}
-                        </li>
-                      ))}
-                    </ul>
+                {/* Imported By */}
+                <div>
+                  <p className="text-slate-500 font-semibold mb-1.5 uppercase tracking-wider text-[10px] flex items-center justify-between">
+                    <span>Imported By / Referenced By</span>
+                    <span className="text-[9px] text-slate-600 bg-slate-950 px-1.5 py-0.5 rounded">{nodeImportedBy.length}</span>
+                  </p>
+                  <div className="max-h-36 overflow-y-auto space-y-1.5 scrollbar-thin">
+                    {nodeImportedBy.length > 0 ? (
+                      nodeImportedBy.map((imp, idx) => (
+                        <div key={idx} className="p-1.5 bg-slate-950/30 border border-slate-800/40 rounded text-[10px] text-slate-300 truncate font-mono">
+                          &larr; {imp.split('/').pop()}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[10px] text-slate-600 italic">None detected</div>
+                    )}
                   </div>
-                )}
+                </div>
 
-                <button
-                  onClick={() => setSelectedNode(null)}
-                  className="text-frost-dim hover:text-danger transition-colors mt-2"
-                >
-                  × Deselect
-                </button>
               </div>
             </Card>
           </div>

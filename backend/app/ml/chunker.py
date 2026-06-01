@@ -85,7 +85,7 @@ def chunk_files(
 # ------------------------------------------------------------------ #
 
 def _has_structural_symbols(fm: Dict[str, Any]) -> bool:
-    return bool(fm.get("functions") or fm.get("classes"))
+    return bool(fm.get("functions") or fm.get("classes") or fm.get("interfaces") or fm.get("structs"))
 
 
 def _semantic_chunks(
@@ -93,7 +93,7 @@ def _semantic_chunks(
     fm: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """
-    Emit one chunk per top-level function/class boundary found in
+    Emit one chunk per top-level function/class/interface/struct boundary found in
     ParsedFileMetadata, then a final "remainder" window chunk for any
     lines not covered by a symbol boundary.
     """
@@ -115,6 +115,16 @@ def _semantic_chunks(
         start = cls.get("lineno", 1)
         end = cls.get("end_lineno") or _estimate_end(lines, start - 1, "class")
         boundaries.append((start, end, cls.get("name", ""), "class", cls))
+
+    for interface in fm.get("interfaces", []):
+        start = interface.get("lineno", 1)
+        end = interface.get("end_lineno") or _estimate_end(lines, start - 1, "interface")
+        boundaries.append((start, end, interface.get("name", ""), "interface", interface))
+
+    for struct in fm.get("structs", []):
+        start = struct.get("lineno", 1)
+        end = struct.get("end_lineno") or _estimate_end(lines, start - 1, "struct")
+        boundaries.append((start, end, struct.get("name", ""), "struct", struct))
 
     # Sort by start line, deduplicate overlapping
     boundaries.sort(key=lambda b: b[0])
