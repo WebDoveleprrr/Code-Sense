@@ -1,6 +1,6 @@
 // src/components/layout/Sidebar.jsx
 import React, { useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Upload,
@@ -32,6 +32,7 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   return (
     <aside
@@ -130,7 +131,7 @@ export default function Sidebar() {
                 localStorage.removeItem("access_token");
                 localStorage.removeItem("refresh_token");
                 localStorage.removeItem("user");
-                window.location.href = "/login";
+                navigate("/login");
               }}
               className="mt-2 w-full px-3 py-1.5 text-xs text-red-400 hover:text-red-300 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 rounded-lg transition-all font-mono"
             >
@@ -143,7 +144,7 @@ export default function Sidebar() {
               localStorage.removeItem("access_token");
               localStorage.removeItem("refresh_token");
               localStorage.removeItem("user");
-              window.location.href = "/login";
+              navigate("/login");
             }}
             title="Sign Out"
             className="w-8 h-8 mx-auto flex items-center justify-center rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/20 transition-all"

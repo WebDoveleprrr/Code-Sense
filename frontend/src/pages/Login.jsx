@@ -28,7 +28,7 @@ export default function Login() {
         localStorage.setItem("user", JSON.stringify(data.user));
         toast.success(`Welcome back, ${data.user.name}!`);
         // Navigate to dashboard
-        window.location.href = "/";
+        navigate("/");
       } else {
         toast.error(data.detail || "Authentication failed");
       }
@@ -55,7 +55,7 @@ export default function Login() {
         localStorage.setItem("user", JSON.stringify(data.user));
         toast.success(`Welcome back, ${data.user.name}!`);
         // Navigate to dashboard
-        window.location.href = "/";
+        navigate("/");
       } else {
         toast.error(data.detail || "Authentication failed");
       }
