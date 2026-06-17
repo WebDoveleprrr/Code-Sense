@@ -12,7 +12,8 @@
     "react-syntax-highlighter": "^15.5.0",
     "lucide-react": "^0.441.0",
     "react-hot-toast": "^2.4.1",
-    "framer-motion": "^11.5.4"
+    "framer-motion": "^11.5.4",
+    "@react-oauth/google": "^0.12.1"
   },
   "devDependencies": {
     "vite": "^5.0.0",
