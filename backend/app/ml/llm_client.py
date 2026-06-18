@@ -210,8 +210,8 @@ async def validate_startup() -> None:
                     break
             
             if not model_loaded:
-                logger.error(
-                    "LLM Startup Health-Check Failed:\n"
+                logger.warning(
+                    "LLM Startup Health-Check Failed (Graceful Degradation active):\n"
                     "  Provider: {provider}\n"
                     "  Base URL: {base_url}\n"
                     "  Configured Model: {model}\n"
@@ -223,14 +223,14 @@ async def validate_startup() -> None:
                     available=available_models,
                     status=response_status
                 )
-                raise LLMUnavailableError(f"Model '{model}' is not loaded in Ollama. Available: {available_models}")
-            
-            logger.info("Ollama provider active")
-            logger.info("Model loaded: {model}", model=model)
+                logger.warning("Continuing startup without LLM capabilities. Dependent features will return 'LLM temporarily unavailable'.")
+            else:
+                logger.info("Ollama provider active")
+                logger.info("Model loaded: {model}", model=model)
         except Exception as exc:
             if not isinstance(exc, LLMUnavailableError):
-                logger.error(
-                    "LLM Startup Health-Check Failed:\n"
+                logger.warning(
+                    "LLM Startup Health-Check Failed (Graceful Degradation active):\n"
                     "  Provider: {provider}\n"
                     "  Base URL: {base_url}\n"
                     "  Configured Model: {model}\n"
@@ -242,8 +242,9 @@ async def validate_startup() -> None:
                     available=available_models,
                     status=response_status
                 )
-                raise LLMUnavailableError(f"Ollama connection validation failed: {exc}")
-            raise
+                logger.warning(f"Ollama connection validation failed: {exc}")
+            else:
+                pass
     elif provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", settings.OPENAI_API_KEY)
         if not api_key:

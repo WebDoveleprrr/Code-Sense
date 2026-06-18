@@ -84,29 +84,51 @@ class FAISSStore:
         vectors = _to_float32(vectors)
         n, dim = vectors.shape
 
+        self.initialize(dim, expected_count=n, model_name=model_name)
+        
         if n >= IVF_THRESHOLD:
+            # Rebuild properly for IVF if necessary
             self._index = _build_ivf_index(vectors, dim)
-            index_type = "IVFFlat"
+            self._meta["index_type"] = "IVFFlat"
         else:
-            self._index = faiss.IndexFlatIP(dim)
             self._index.add(vectors)
-            index_type = "FlatIP"
+            
+        self._meta["ntotal"] = self._index.ntotal
 
+        logger.info(
+            "[{id}] FAISS {type} index built — {n} vectors (dim={d}).",
+            id=self.repo_id,
+            type=self._meta["index_type"],
+            n=n,
+            d=dim,
+        )
+
+    def initialize(self, dim: int, expected_count: int = 0, model_name: str = "") -> None:
+        """Initialize an empty index, avoiding memory spikes for large repos."""
+        # For streaming without training, we stick to FlatIP unless the user explicitly 
+        # trains it first (not supported easily in streaming without sampling).
+        # We respect the IVF_THRESHOLD constraint but fallback to FlatIP for streaming.
+        self._index = faiss.IndexFlatIP(dim)
+        index_type = "FlatIP"
+        
         self._meta = {
             "repo_id": self.repo_id,
             "dim": dim,
-            "ntotal": n,
+            "ntotal": 0,
             "index_type": index_type,
             "model_name": model_name,
             "created_at": datetime.utcnow().isoformat(),
         }
-        logger.info(
-            "[{id}] FAISS {type} index built — {n} vectors (dim={d}).",
-            id=self.repo_id,
-            type=index_type,
-            n=n,
-            d=dim,
-        )
+        logger.info("[{id}] FAISS initialized {type} index (dim={d}).", id=self.repo_id, type=index_type, d=dim)
+        
+    def add_vectors(self, vectors: np.ndarray) -> None:
+        """Append vectors progressively to the initialized index."""
+        if self._index is None:
+            raise RuntimeError("Index not initialized.")
+            
+        vectors = _to_float32(vectors)
+        self._index.add(vectors)
+        self._meta["ntotal"] = self._index.ntotal
 
     # ------------------------------------------------------------------ #
     # Persist

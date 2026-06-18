@@ -256,9 +256,21 @@ function RepoList() {
             >
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-mono text-frost truncate">{repo.name}</p>
-                <p className="text-xs text-frost-dim">
-                  {repo.source} · {repo.total_files || 0} files · {timeAgo(repo.created_at)}
-                </p>
+                {repo.indexing_mode === "prioritized" ? (
+                  <div className="text-xs text-frost-dim mt-1 bg-ink-900 border border-ink-600 rounded p-2">
+                    <p className="mb-1">
+                      Repository contains {repo.total_files} files.
+                      CodeSense automatically selected and indexed the most relevant source files while skipping generated, vendor, and low-priority files.
+                    </p>
+                    <p className="font-mono text-plasma-light">
+                      Indexed: {repo.indexed_files} | Skipped: {repo.skipped_files}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-frost-dim">
+                    {repo.source} · {repo.total_files || 0} files · {timeAgo(repo.created_at)}
+                  </p>
+                )}
               </div>
               <StatusBadge status={repo.status} />
               <button

@@ -76,27 +76,26 @@ def prepare_texts(chunks: List[Dict[str, Any]]) -> List[str]:
 # Core pipeline function
 # ---------------------------------------------------------------------------
 
-def generate_embeddings(
+def generate_embeddings_stream(
     chunks: List[Dict[str, Any]],
     show_progress: Optional[bool] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+):
     """
-    Generate embeddings for a list of chunk dicts.
+    Generate embeddings for a list of chunk dicts progressively.
 
     Args:
         chunks:        List of chunk dicts as produced by chunker.py.
         show_progress: Override progress-bar display. None = auto.
 
-    Returns:
-        (vectors, stats) where:
-          vectors — float32 array of shape (N, dim)
-          stats   — dict with timing, shape, model info
+    Yields:
+        (batch_vectors, batch_indices) where:
+          batch_vectors — float32 array of shape (batch_size, dim)
+          batch_indices — list of indices for this batch
     """
     import gc
     if not chunks:
-        logger.warning("generate_embeddings called with empty chunk list.")
-        embedder = get_embedder()
-        return np.empty((0, embedder.dim), dtype=np.float32), {"count": 0}
+        logger.warning("generate_embeddings_stream called with empty chunk list.")
+        return
 
     embedder = get_embedder()
     t0 = time.perf_counter()
@@ -110,39 +109,28 @@ def generate_embeddings(
     )
 
     batch_size = embedder._batch_size
-    all_vectors = []
 
     for i in range(0, len(texts), batch_size):
         batch_texts = texts[i : i + batch_size]
         batch_vectors = embedder.embed_batch(batch_texts, normalize=True, show_progress=False)
-        all_vectors.append(batch_vectors)
+        
+        # Sanity checks
+        assert batch_vectors.dtype == np.float32, "Embeddings must be float32"
+        
+        yield batch_vectors, list(range(i, i + len(batch_texts)))
+        
+        # Free memory explicitly after each batch
+        del batch_texts
+        del batch_vectors
         gc.collect()
 
-    vectors = np.vstack(all_vectors)
     elapsed = time.perf_counter() - t0
-
-    # Sanity checks
-    assert vectors.shape == (len(chunks), embedder.dim), (
-        f"Unexpected vector shape {vectors.shape}, expected ({len(chunks)}, {embedder.dim})"
-    )
-    assert vectors.dtype == np.float32, "Embeddings must be float32"
-
-    stats: Dict[str, Any] = {
-        "count": len(chunks),
-        "dim": embedder.dim,
-        "model": embedder.model_name,
-        "elapsed_s": round(elapsed, 3),
-        "throughput_per_s": round(len(chunks) / max(elapsed, 1e-6), 1),
-        "shape": list(vectors.shape),
-    }
     logger.info(
-        "Embedding complete: {n} vectors in {t:.2f}s ({tp:.1f}/s)",
-        n=stats["count"],
-        t=stats["elapsed_s"],
-        tp=stats["throughput_per_s"],
+        "Embedding stream complete: {n} vectors in {t:.2f}s ({tp:.1f}/s)",
+        n=len(chunks),
+        t=elapsed,
+        tp=len(chunks) / max(elapsed, 1e-6),
     )
-
-    return vectors, stats
 
 
 # ---------------------------------------------------------------------------

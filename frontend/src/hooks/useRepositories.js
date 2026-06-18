@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { repositoriesApi } from "../services/api";
 
-const NON_FINAL_STATUSES = ["pending", "cloning", "parsing", "chunking", "embedding", "indexing", "processing"];
+const NON_FINAL_STATUSES = ["queued", "cloning", "parsing", "chunking", "embedding", "indexing", "processing"];
 
 export function useRepositories() {
   const [repos, setRepos] = useState([]);

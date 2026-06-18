@@ -46,7 +46,7 @@ class IngestionService:
             user_id=user_id,
             source=RepoSource.GITHUB,
             github_url=github_url,
-            status=RepoStatus.PENDING,
+            status=RepoStatus.QUEUED,
         )
         await doc.insert()
         logger.info("Created GitHub repo record: {owner}/{name} [{id}]", owner=owner, name=name, id=str(doc.id))
@@ -81,9 +81,9 @@ class IngestionService:
         upload_path = self.settings.UPLOAD_DIR / (file.filename or "upload.zip")
 
         try:
-            async with aiofiles.open(upload_path, "wb") as f:
-                content = await file.read()
-                await f.write(content)
+            with open(upload_path, "wb") as f:
+                import shutil
+                shutil.copyfileobj(file.file, f)
         except Exception as exc:
             raise UploadError(f"Failed to save uploaded file: {exc}") from exc
 
@@ -93,7 +93,7 @@ class IngestionService:
             user_id=user_id,
             source=RepoSource.ZIP,
             zip_filename=str(upload_path),
-            status=RepoStatus.PENDING,
+            status=RepoStatus.QUEUED,
         )
         await doc.insert()
         logger.info("Created ZIP repo record: {name} [{id}]", name=name, id=str(doc.id))

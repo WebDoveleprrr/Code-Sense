@@ -8,6 +8,10 @@ import jwt
 import httpx
 from app_logger import logger
 from app.models.user import UserDocument
+from fastapi.responses import JSONResponse
+
+class TokenExpiredError(Exception):
+    pass
 
 JWT_SECRET = os.getenv("JWT_SECRET", "codesense-super-secret-key-change-me-in-production-123456")
 JWT_ALGORITHM = "HS256"
@@ -39,45 +43,58 @@ def verify_token(token: str, token_type: str = "access") -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         if payload.get("type") != token_type:
+            logger.warning(f"Invalid token type. Expected {token_type}, got {payload.get('type')}")
             return None
         return payload
     except jwt.ExpiredSignatureError:
         logger.warning(f"Expired {token_type} token signature")
-        return None
+        raise TokenExpiredError()
     except jwt.InvalidTokenError as e:
-        logger.warning(f"Invalid {token_type} token: {e}")
+        logger.warning(f"Invalid {token_type} token signature: {e}")
         return None
 
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from app.core.config import get_settings
+
 async def verify_google_token(token: str) -> Optional[dict]:
-    """Verify Google OAuth token against Google API."""
+    """Verify Google OAuth token against Google API with client ID audience validation."""
+    settings = get_settings()
+    if not settings.GOOGLE_CLIENT_ID:
+        logger.error("GOOGLE_CLIENT_ID is not configured in settings.")
+        return None
     try:
-        # Note: In a production app, use google-auth library, but httpx is dependency-free and robust.
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"https://oauth2.googleapis.com/tokeninfo?id_token={token}",
-                timeout=5.0
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                logger.error(f"Google token validation returned status {resp.status_code}: {resp.text}")
+        # Validate signature and audience using google-auth official verification library
+        idinfo = id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            settings.GOOGLE_CLIENT_ID
+        )
+        return idinfo
     except Exception as e:
-        logger.exception(f"Error validating Google token: {e}")
-    return None
+        logger.error(f"Google token verification failed: {e}")
+        return None
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> UserDocument:
     """FastAPI Dependency to retrieve authenticated user."""
     if not credentials:
+        logger.warning("Auth failed: Missing token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authorization credentials"
         )
     
     token = credentials.credentials
-    payload = verify_token(token, "access")
+    try:
+        payload = verify_token(token, "access")
+    except TokenExpiredError:
+        logger.warning("Auth failed: Expired token")
+        raise
+
     if not payload:
+        logger.warning("Auth failed: Invalid signature")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired access token"
@@ -85,6 +102,7 @@ async def get_current_user(
         
     user_id = payload.get("sub")
     if not user_id:
+        logger.warning("Auth failed: Invalid signature (No User ID)")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User ID not found in token"
@@ -92,6 +110,7 @@ async def get_current_user(
         
     user = await UserDocument.get(user_id)
     if not user:
+        logger.warning(f"Auth failed: User not found ({user_id})")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account not found"

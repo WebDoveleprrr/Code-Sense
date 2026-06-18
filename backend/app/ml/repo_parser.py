@@ -73,7 +73,9 @@ SUPPORTED_EXTENSIONS: Dict[str, str] = {
 # Directories always skipped during traversal
 SKIP_DIRS: set = {
     ".git",
+    ".github",
     "__pycache__",
+    ".cache",
     "node_modules",
     ".venv",
     "venv",
@@ -81,7 +83,11 @@ SKIP_DIRS: set = {
     "dist",
     "build",
     ".next",
+    ".nuxt",
     "target",
+    "out",
+    "vendor",
+    "third_party",
     ".idea",
     ".vscode",
     "coverage",
@@ -95,11 +101,19 @@ SKIP_DIRS: set = {
 SKIP_FILES: set = {
     "package-lock.json",
     "yarn.lock",
+    "pnpm-lock.yaml",
     "Pipfile.lock",
     "poetry.lock",
     "Cargo.lock",
     ".DS_Store",
     "Thumbs.db",
+}
+
+# Substring matches for file skipping
+SKIP_EXTENSIONS = {
+    ".min.js", ".min.css", ".map",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".pdf", ".zip", ".tar", ".gz", ".exe", ".dll"
 }
 
 # Maximum single-file size (bytes)
@@ -156,6 +170,9 @@ def _walk_sync(repo_dir: Path) -> List[Dict]:
 
         # --- File name check ---
         if path.name in SKIP_FILES:
+            continue
+            
+        if any(path.name.lower().endswith(ext) for ext in SKIP_EXTENSIONS):
             continue
 
         # --- Size check ---

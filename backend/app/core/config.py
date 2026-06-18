@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     SECRET_KEY: str = "change_this_secret"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    GOOGLE_CLIENT_ID: str = ""
 
     # ------------------------------------------------------------------ #
     # CORS

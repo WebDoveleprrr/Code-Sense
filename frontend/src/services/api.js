@@ -19,42 +19,86 @@ api.interceptors.request.use((config) => {
 });
 
 // Response interceptor — normalize errors & handle token refresh
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 api.interceptors.response.use(
   (res) => res.data,
   async (err) => {
     const originalRequest = err.config;
-    if (err.response?.status === 401 && !originalRequest._retry) {
+    
+    const isTokenExpired = err.response?.data?.code === "TOKEN_EXPIRED" || err.response?.status === 401;
+
+    if (isTokenExpired && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise(function(resolve, reject) {
+          failedQueue.push({ resolve, reject });
+        }).then(token => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return api(originalRequest);
+        }).catch(err => {
+          return Promise.reject(err);
+        });
+      }
+
       originalRequest._retry = true;
-      const refreshToken = localStorage.getItem("refresh_token");
-      if (refreshToken) {
-        try {
+      isRefreshing = true;
+
+      try {
+        let newAccessToken;
+        if (window.__codesenseRestoreSession) {
+          newAccessToken = await window.__codesenseRestoreSession();
+        } else {
+          // Fallback if context not mounted
+          const refreshToken = localStorage.getItem("refresh_token");
+          if (!refreshToken) throw new Error("No refresh token");
           const resp = await axios.post(
             `${BASE_URL}/auth/refresh`,
             { refresh_token: refreshToken },
             { headers: { "Content-Type": "application/json" } }
           );
-          const { access_token, refresh_token } = resp.data;
-          localStorage.setItem("access_token", access_token);
-          localStorage.setItem("refresh_token", refresh_token);
-          originalRequest.headers.Authorization = `Bearer ${access_token}`;
-          // Since response interceptor returns data directly (res => res.data), we should handle call retry appropriately
-          const retryResponse = await api(originalRequest);
-          return retryResponse;
-        } catch (refreshErr) {
+          newAccessToken = resp.data.access_token;
+          localStorage.setItem("access_token", newAccessToken);
+          localStorage.setItem("refresh_token", resp.data.refresh_token);
+        }
+        
+        processQueue(null, newAccessToken);
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        return await api(originalRequest);
+        
+      } catch (refreshErr) {
+        processQueue(refreshErr, null);
+        if (window.__codesenseLogout) {
+          window.__codesenseLogout();
+        } else {
           localStorage.removeItem("access_token");
           localStorage.removeItem("refresh_token");
           localStorage.removeItem("user");
-          window.location.href = "/login";
-          return Promise.reject(refreshErr);
         }
+        window.location.href = "/login?expired=1";
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshing = false;
       }
     }
+    
     const msg =
       err.response?.data?.detail ||
       err.response?.data?.message ||
       err.message ||
       "Unknown error";
-    return Promise.reject(new Error(msg));
+    return Promise.reject(new Error(typeof msg === 'string' ? msg : JSON.stringify(msg)));
   }
 );
 

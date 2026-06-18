@@ -31,6 +31,30 @@ from app.models.repository import RepositoryDocument, RepoSource
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
+def rank_files(files_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def get_score(path_str: str) -> int:
+        path_lower = path_str.lower()
+        # High priority
+        if any(path_lower.endswith(name) for name in ["main.py", "app.py", "server.py", "index.js", "index.ts"]):
+            return 100
+        if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["src", "api", "routes", "controllers", "services", "models", "schemas"]):
+            return 80
+        # Medium priority
+        if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["config", "utils", "helpers"]):
+            return 50
+        # Low priority
+        if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["tests", "docs", "examples"]):
+            return 10
+        return 30 # Default
+
+    # Tie breaking: score descending, depth ascending, is_source descending, size ascending
+    return sorted(files_list, key=lambda f: (
+        -get_score(f["file_path"]),
+        f["file_path"].count("/"),
+        0 if f["language"] else 1,
+        f.get("size_bytes", 0)
+    ))
+
 async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     """
     Full ingestion pipeline executed as a background task.
@@ -69,14 +93,17 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     parsed_files = await parse_repository(repo_dir)
     logger.info("[{id}] {n} files collected.", id=repo_id, n=len(parsed_files))
 
-    if not parsed_files:
-        raise ValueError("No supported source files found in the repository.")
+    total_files = len(parsed_files)
+    skipped_files = 0
+    indexing_mode = "standard"
+    MAX_INDEXED_FILES = 1000
 
-    if len(parsed_files) > 5000:
-        raise ValueError(
-            f"Repository exceeds the maximum limit of 100 files (found {len(parsed_files)}). "
-            "Please upload a smaller repository for the Render free-tier environment."
-        )
+    if total_files > MAX_INDEXED_FILES:
+        logger.info("[{id}] Repository exceeds {max} files (found {total}). Applying priority selection.", id=repo_id, max=MAX_INDEXED_FILES, total=total_files)
+        ranked_files = rank_files(parsed_files)
+        parsed_files = ranked_files[:MAX_INDEXED_FILES]
+        skipped_files = total_files - MAX_INDEXED_FILES
+        indexing_mode = "prioritized"
 
     # ---------------------------------------------------------------- #
     # Step 3 — AST parsing (language-specific)
@@ -144,54 +171,45 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     if not chunks:
         raise ValueError("Chunking produced zero chunks — repository may be empty.")
 
-    if len(chunks) > 25000:
+    if len(chunks) > 5000:
         raise ValueError(
-            f"Repository exceeds the maximum limit of 500 chunks (found {len(chunks)}). "
+            f"Repository exceeds the maximum limit of 5000 chunks (found {len(chunks)}). "
             "Please upload a smaller repository for the Render free-tier environment."
         )
 
     # ---------------------------------------------------------------- #
-    # Step 6 — Embeddings (via embedding_pipeline)
+    # Step 6 — Embeddings & Step 7 — FAISS index stream
     # ---------------------------------------------------------------- #
     repo.status = RepoStatus.EMBEDDING
     await repo.save()
-    log_mem("Embedding generation")
-    logger.info("[{id}] START EMBEDDING", id=repo_id)
+    log_mem("Embedding generation & Indexing")
+    logger.info("[{id}] START EMBEDDING STREAM", id=repo_id)
 
-    from app.ml.embedding_pipeline import generate_embeddings
+    from app.ml.embedding_pipeline import generate_embeddings_stream
     from app.ml.embedder import get_embedder
-
-    # Delegate CPU-bound embedding generation to thread pool
-    vectors, embed_stats = await asyncio.to_thread(generate_embeddings, chunks)
-    logger.info("[{id}] EMBEDDINGS GENERATED", id=repo_id)
-    embedder = get_embedder()
-    logger.info(
-        "[{id}] Embeddings shape: {s}  ({model})",
-        id=repo_id,
-        s=vectors.shape,
-        model=embedder.model_name,
-    )
-
-    # ---------------------------------------------------------------- #
-    # Step 7 — FAISS index
-    # ---------------------------------------------------------------- #
-    repo.status = RepoStatus.INDEXING
-    await repo.save()
-    log_mem("Indexing vector store")
-    logger.info("[{id}] FAISS START", id=repo_id)
-
     from app.vector_store.faiss_store import FAISSStore
 
+    embedder = get_embedder()
     index_path = settings.VECTOR_STORE_DIR / repo_id
     store = FAISSStore(repo_id=repo_id, index_path=str(index_path))
-    store.build(vectors, model_name=embedder.model_name)
-    store.save()
-    logger.info("[{id}] FAISS COMPLETE", id=repo_id)
-    logger.info("[{id}] FAISS index saved → {path}", id=repo_id, path=str(index_path))
+    
+    # Initialize FAISS with FlatIP for progressive insertion
+    store.initialize(embedder.dim, expected_count=len(chunks), model_name=embedder.model_name)
 
-    # Free vector memory immediately
-    del vectors
-    gc.collect()
+    # We must consume the generator in a thread if it blocks, but the generator is synchronous.
+    # To keep the event loop unblocked, we iterate over it using asyncio.to_thread per batch
+    # Or simply run the whole loop in a thread. Since we want to update memory in chunks, 
+    # we can run a wrapper function in a thread.
+    
+    def stream_to_faiss():
+        for batch_vectors, indices in generate_embeddings_stream(chunks):
+            store.add_vectors(batch_vectors)
+            
+    await asyncio.to_thread(stream_to_faiss)
+    
+    logger.info("[{id}] EMBEDDINGS GENERATED AND INDEXED", id=repo_id)
+    store.save()
+    logger.info("[{id}] FAISS index saved → {path}", id=repo_id, path=str(index_path))
 
     # ---------------------------------------------------------------- #
     # Step 8 — Metadata sidecar (MetadataStore)
@@ -235,12 +253,18 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     # ---------------------------------------------------------------- #
     # Step 10 — Update RepositoryDocument stats
     # ---------------------------------------------------------------- #
-    repo.total_files = repo_metadata["total_files"]
+    repo.total_files = total_files
     repo.total_chunks = len(chunks)
     repo.total_tokens = sum(c.get("token_count", 0) for c in chunks)
     repo.language_breakdown = repo_metadata["language_breakdown"]
     repo.faiss_index_path = str(index_path)
     repo.updated_at = datetime.utcnow()
+    
+    # Store extended metadata
+    repo.indexed_files = len(parsed_files)
+    repo.skipped_files = skipped_files
+    repo.indexing_mode = indexing_mode
+    
     repo.repo_metadata = {
         "total_lines": repo_metadata["total_lines"],
         "total_functions": repo_metadata["total_functions"],
@@ -248,6 +272,9 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
         "total_imports": repo_metadata["total_imports"],
         "files": repo_metadata["files"],
         "embedding_model": embedder.model_name,
+        "indexed_files": len(parsed_files),
+        "skipped_files": skipped_files,
+        "indexing_mode": indexing_mode,
         "embedding_dim": embedder.dim,
     }
     await repo.save()

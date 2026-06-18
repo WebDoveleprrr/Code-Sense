@@ -20,7 +20,7 @@ class RepoSource(str, Enum):
 
 
 class RepoStatus(str, Enum):
-    PENDING = "pending"
+    QUEUED = "queued"
     CLONING = "cloning"
     PARSING = "parsing"
     CHUNKING = "chunking"
@@ -42,12 +42,15 @@ class RepositoryDocument(Document):
     zip_filename: Optional[str] = None
 
     # Processing state
-    status: RepoStatus = RepoStatus.PENDING
+    status: RepoStatus = RepoStatus.QUEUED
     error_message: Optional[str] = None
 
     # Derived metadata
     language_breakdown: Dict[str, int] = Field(default_factory=dict)
     total_files: int = 0
+    indexed_files: int = 0
+    skipped_files: int = 0
+    indexing_mode: str = "standard"
     total_chunks: int = 0
     total_tokens: int = 0
     faiss_index_path: Optional[str] = None

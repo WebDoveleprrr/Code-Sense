@@ -97,6 +97,9 @@ class RepoSummaryResponse(BaseModel):
     source: str
     status: str
     total_files: int
+    indexed_files: int = 0
+    skipped_files: int = 0
+    indexing_mode: str = "standard"
     total_chunks: int
     created_at: str
 

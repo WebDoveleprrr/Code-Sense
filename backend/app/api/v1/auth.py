@@ -33,8 +33,10 @@ async def google_login(payload: GoogleLoginRequest):
     # 1. Verify token with Google APIs
     user_info = await verify_google_token(payload.id_token)
     if not user_info:
-        # For development / testing purposes, check if the token is a mock/test token
-        if payload.id_token.startswith("mock_token_"):
+        # For development / testing purposes, check if the token is a mock/test token and settings.is_development is true
+        from app.core.config import get_settings
+        settings = get_settings()
+        if settings.is_development and payload.id_token.startswith("mock_token_"):
             email = f"{payload.id_token.replace('mock_token_', '')}@example.com"
             user_info = {
                 "email": email,

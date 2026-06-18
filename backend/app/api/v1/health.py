@@ -21,16 +21,29 @@ class HealthResponse(BaseModel):
     version: str
     environment: str
     timestamp: str
+    llm: str
+    embedding_model: str
 
 
 @router.get("", response_model=HealthResponse, summary="Basic liveness probe")
 async def health_check(settings: Settings = Depends(get_settings)) -> HealthResponse:
+    from app.ml.llm_client import get_provider
+    from app.ml.embedder import get_embedder
+    
+    try:
+        embedder = get_embedder()
+        embed_status = "ok"
+    except Exception:
+        embed_status = "unavailable"
+        
     return HealthResponse(
         status="ok",
         app=settings.APP_NAME,
         version=settings.APP_VERSION,
         environment=settings.APP_ENV,
         timestamp=datetime.utcnow().isoformat() + "Z",
+        llm=get_provider(),
+        embedding_model=embed_status,
     )
 
 

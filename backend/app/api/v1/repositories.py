@@ -46,6 +46,9 @@ def _doc_to_summary(doc: RepositoryDocument) -> RepoSummaryResponse:
         source=doc.source.value,
         status=doc.status.value,
         total_files=doc.total_files,
+        indexed_files=doc.indexed_files,
+        skipped_files=doc.skipped_files,
+        indexing_mode=doc.indexing_mode,
         total_chunks=doc.total_chunks,
         created_at=doc.created_at.isoformat(),
     )
@@ -60,6 +63,9 @@ def _doc_to_detail(doc: RepositoryDocument) -> RepoDetailResponse:
         source=doc.source.value,
         status=doc.status.value,
         total_files=doc.total_files,
+        indexed_files=doc.indexed_files,
+        skipped_files=doc.skipped_files,
+        indexing_mode=doc.indexing_mode,
         total_chunks=doc.total_chunks,
         total_tokens=doc.total_tokens,
         language_breakdown=doc.language_breakdown,
@@ -140,29 +146,9 @@ async def ingest_zip_repo(
     if not file.filename or not file.filename.endswith(".zip"):
         raise UploadError("Only .zip archives are accepted.")
 
-    # Synchronous pre-validation for size limits on ZIP file
-    import zipfile
-    import io
-    from fastapi import HTTPException
-    from pathlib import Path
-    from app.ml.repo_parser import SKIP_DIRS
-
-    try:
-        contents = await file.read()
-        await file.seek(0)
-        with zipfile.ZipFile(io.BytesIO(contents)) as z:
-            file_names = [f for f in z.namelist() if not f.endswith('/')]
-            filtered_files = [
-                f for f in file_names
-                if not any(part in SKIP_DIRS for part in Path(f).parts)
-            ]
-            if len(filtered_files) > 100:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Repository exceeds the maximum allowed limit of 100 files (found {len(filtered_files)} files)."
-                )
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid or corrupt ZIP archive.")
+    # The file size is checked by the MaxUploadSizeMiddleware.
+    # We remove synchronous zip validation to prevent memory exhaustion and blocking HTTP response.
+    # Validation will happen in the background task.
 
     repo_doc = await service.create_zip_repo_record(file, user_id=str(current_user.id))
     background_tasks.add_task(service.process_zip_repo, str(repo_doc.id))

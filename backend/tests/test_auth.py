@@ -4,6 +4,9 @@ from app.core.auth import create_access_token, create_refresh_token, verify_toke
 from app.models.user import UserDocument
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
+import time
+import jwt
+from app.core.auth import JWT_SECRET, JWT_ALGORITHM, TokenExpiredError
 
 @pytest_asyncio.fixture(autouse=True)
 async def init_mock_db():
@@ -56,3 +59,23 @@ async def test_user_document_creation():
     
     # Cleanup
     await db_user.delete()
+
+
+@pytest.mark.asyncio
+async def test_expired_token_raises_error():
+    # Create an artificially expired token
+    user_id = "507f1f77bcf86cd799439011"
+    expired_payload = {
+        "sub": user_id,
+        "type": "access",
+        "exp": time.time() - 3600  # Expired an hour ago
+    }
+    expired_token = jwt.encode(expired_payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    
+    with pytest.raises(TokenExpiredError):
+        verify_token(expired_token, "access")
+
+@pytest.mark.asyncio
+async def test_invalid_token_returns_none():
+    invalid_token = "not.a.real.token"
+    assert verify_token(invalid_token, "access") is None

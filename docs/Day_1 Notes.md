@@ -957,3 +957,34 @@ LLM = AI Software Engineer
 
 7. Service layer performs actual work.
    Route layer only receives and forwards requests.
+
+   Common Misconceptions Cleared
+
+1. Route does not open a page.
+   Frontend page calls the route.
+
+2. Parser creates chunks.
+   Embedding model creates vectors.
+
+3. FAISS stores/searches vectors.
+   LLM reads original chunks.
+
+4. Vectors are used for retrieval.
+   They are not used for code execution.
+
+5. Semantic search retrieves relevant code.
+   It does not execute code.
+
+6. FastAPI is the backend framework.
+   React is the frontend framework.
+
+7. API is not a separate server.
+   API endpoints are part of the backend.
+
+8. Service layer performs work.
+   Route layer receives and forwards requests.
+
+9. Ollama is a model runner.
+   LangChain is a workflow/orchestration framework.
+
+10. Retrieval and execution are different systems.

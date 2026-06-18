@@ -13,6 +13,7 @@ import Architecture from "./pages/Architecture";
 import Login from "./pages/Login";
 import ImpactAnalysis from "./pages/ImpactAnalysis";
 import AIReview from "./pages/AIReview";
+import { AuthProvider } from "./context/AuthContext";
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem("access_token");
@@ -24,6 +25,7 @@ function ProtectedRoute({ children }) {
 
 export default function App() {
   return (
+    <AuthProvider>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Toaster
         position="top-right"
@@ -68,5 +70,6 @@ export default function App() {
         />
       </Routes>
     </BrowserRouter>
+    </AuthProvider>
   );
 }
