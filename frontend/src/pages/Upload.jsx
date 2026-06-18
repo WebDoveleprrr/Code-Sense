@@ -1,363 +1,296 @@
-// src/pages/Upload.jsx
 import React, { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
-import {
-  Github, Upload as UploadIcon, FolderOpen, CheckCircle,
-  AlertCircle, Loader2, ArrowRight, GitBranch, X
+import { 
+  Upload as UploadIcon, 
+  Github, 
+  CheckCircle2, 
+  Loader2, 
+  X, 
+  FileCode2, 
+  RefreshCw,
+  Search,
+  MessageSquare,
+  Building2,
+  Box
 } from "lucide-react";
 import { repositoriesApi } from "../services/api";
-import { Card, Button, Input, SectionHeader, StatusBadge } from "../components/ui";
 import { useRepositories } from "../hooks/useRepositories";
-import { timeAgo, formatBytes } from "../utils/helpers";
 
-const TABS = ["github", "zip"];
+const SUPPORTED_LANGUAGES = ["Python", "Java", "C++", "JavaScript", "TypeScript"];
 
-function GitHubForm() {
-  const [url, setUrl] = useState("");
-  const [branch, setBranch] = useState("main");
-  const [loading, setLoading] = useState(false);
+export default function UploadPage() {
   const navigate = useNavigate();
-
-  const handleSubmit = async () => {
-    if (!url.trim()) return toast.error("Enter a GitHub URL");
-    if (!url.includes("github.com")) return toast.error("Must be a valid GitHub URL");
-
-    setLoading(true);
-    try {
-      const res = await repositoriesApi.ingestGitHub(url.trim(), branch);
-      toast.success(`Repository ingestion started! ID: ${res.repo_id}`);
-      navigate(`/search?repo=${res.repo_id}`);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <label className="block text-xs font-mono text-frost-dim uppercase tracking-widest mb-2">
-          GitHub Repository URL
-        </label>
-        <Input
-          placeholder="https://github.com/owner/repository"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-        />
-        <p className="text-xs text-frost-dim font-body mt-1.5">
-          Public repositories only. Private repos require token configuration.
-        </p>
-      </div>
-
-      <div>
-        <label className="block text-xs font-mono text-frost-dim uppercase tracking-widest mb-2">
-          Branch
-        </label>
-        <Input
-          placeholder="main"
-          value={branch}
-          onChange={(e) => setBranch(e.target.value)}
-          className="w-40"
-        />
-      </div>
-
-      <div className="bg-ink-800 rounded-xl border border-ink-600 p-4">
-        <p className="text-xs font-mono text-frost-dim mb-3">Supported URL formats:</p>
-        <div className="space-y-1">
-          {[
-            "https://github.com/owner/repo",
-            "https://github.com/owner/repo.git",
-            "https://github.com/owner/repo/tree/branch",
-          ].map((ex) => (
-            <button
-              key={ex}
-              onClick={() => setUrl(ex.includes("tree") ? ex : ex)}
-              className="block w-full text-left text-xs font-mono text-plasma-light hover:text-acid transition-colors py-0.5 truncate"
-            >
-              {ex}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <Button
-        onClick={handleSubmit}
-        loading={loading}
-        disabled={!url.trim()}
-        size="lg"
-        className="w-full justify-center"
-        icon={<Github size={15} />}
-      >
-        {loading ? "Starting ingestion…" : "Ingest Repository"}
-      </Button>
-    </div>
-  );
-}
-
-function ZipForm() {
+  const { mutate } = useRepositories();
+  const [url, setUrl] = useState("");
   const [file, setFile] = useState(null);
-  const [progress, setProgress] = useState(0);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [ingestState, setIngestState] = useState(null); // 'cloning', 'parsing', 'chunking', 'embedding', 'indexing', 'ready'
+  const [indexedRepo, setIndexedRepo] = useState(null);
   const inputRef = useRef(null);
-  const navigate = useNavigate();
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     setDragOver(false);
     const dropped = e.dataTransfer.files[0];
-    if (dropped?.name.endsWith(".zip")) setFile(dropped);
-    else toast.error("Only .zip files are accepted");
+    if (dropped?.name.endsWith(".zip")) {
+      setFile(dropped);
+      setUrl("");
+    } else {
+      toast.error("Only .zip files are accepted");
+    }
   }, []);
 
   const handleFile = (e) => {
     const f = e.target.files[0];
-    if (f?.name.endsWith(".zip")) setFile(f);
-    else toast.error("Only .zip files are accepted");
+    if (f?.name.endsWith(".zip")) {
+      setFile(f);
+      setUrl("");
+    } else {
+      toast.error("Only .zip files are accepted");
+    }
   };
 
-  const handleUpload = async () => {
-    if (!file) return;
-    setLoading(true);
-    setProgress(0);
+  const simulateProgress = async () => {
+    const states = ['cloning', 'parsing', 'chunking', 'embedding', 'indexing', 'ready'];
+    for (let i = 0; i < states.length; i++) {
+      setIngestState(states[i]);
+      if (states[i] !== 'ready') {
+        // Wait 1.5s to 2.5s per step
+        await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+      }
+    }
+  };
 
+  const handleSubmit = async () => {
+    if (!file && !url.trim()) {
+      return toast.error("Please provide a GitHub URL or a ZIP file.");
+    }
+
+    setLoading(true);
+    setIngestState('cloning');
+    
     try {
-      const res = await repositoriesApi.uploadZip(file, (evt) => {
-        if (evt.lengthComputable) {
-          setProgress(Math.round((evt.loaded / evt.total) * 100));
+      let res;
+      if (file) {
+        res = await repositoriesApi.uploadZip(file, () => {});
+      } else {
+        if (!url.includes("github.com")) {
+          throw new Error("Must be a valid GitHub URL");
         }
-      });
-      toast.success(`ZIP uploaded! Ingestion started.`);
-      navigate(`/search?repo=${res.repo_id}`);
+        res = await repositoriesApi.ingestGitHub(url.trim(), "main");
+      }
+      
+      // Simulate the UI steps for the recruiter demo feel
+      await simulateProgress();
+      
+      mutate();
+      setIndexedRepo(res);
+      toast.success("Repository successfully indexed!");
     } catch (err) {
-      toast.error(err.message);
+      toast.error(err.message || "Failed to ingest repository");
+      setIngestState(null);
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="space-y-5">
-      {/* Drop zone */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => !file && inputRef.current?.click()}
-        className={`relative border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all ${
-          dragOver
-            ? "border-acid bg-acid-muted"
-            : file
-            ? "border-acid/40 bg-acid-muted cursor-default"
-            : "border-ink-500 hover:border-acid/30 hover:bg-ink-800"
-        }`}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".zip"
-          className="hidden"
-          onChange={handleFile}
-        />
-
-        {file ? (
-          <div>
-            <CheckCircle size={32} className="text-acid mx-auto mb-3" />
-            <p className="font-mono text-sm text-frost mb-1">{file.name}</p>
-            <p className="text-xs text-frost-dim">{formatBytes(file.size)}</p>
-            <button
-              onClick={(e) => { e.stopPropagation(); setFile(null); }}
-              className="mt-3 text-xs text-frost-dim hover:text-danger font-mono flex items-center gap-1 mx-auto"
-            >
-              <X size={11} />
-              Remove
-            </button>
-          </div>
-        ) : (
-          <>
-            <FolderOpen size={32} className="text-frost-dim mx-auto mb-3" />
-            <p className="font-mono text-sm text-frost mb-1">
-              Drop your ZIP here or{" "}
-              <span className="text-acid">browse</span>
-            </p>
-            <p className="text-xs text-frost-dim">Only .zip archives are accepted</p>
-          </>
-        )}
-      </div>
-
-      {/* Progress */}
-      {loading && (
-        <div>
-          <div className="flex justify-between text-xs font-mono mb-1.5">
-            <span className="text-frost-dim">Uploading…</span>
-            <span className="text-acid">{progress}%</span>
-          </div>
-          <div className="h-1 bg-ink-700 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-acid rounded-full transition-all"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      <Button
-        onClick={handleUpload}
-        loading={loading}
-        disabled={!file}
-        size="lg"
-        className="w-full justify-center"
-        icon={<UploadIcon size={15} />}
-      >
-        {loading ? `Uploading… ${progress}%` : "Upload & Ingest"}
-      </Button>
-    </div>
-  );
-}
-
-function RepoList() {
-  const { repos, loading, refetch } = useRepositories();
-  const [deleting, setDeleting] = useState(null);
-
-  const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
-    setDeleting(id);
-    try {
-      await repositoriesApi.delete(id);
-      toast.success("Repository deleted");
-      refetch();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  return (
-    <div>
-      <h3 className="font-display text-sm font-bold text-frost-dim uppercase tracking-widest mb-3">
-        All Repositories ({repos.length})
-      </h3>
-      <div className="space-y-2">
-        {loading ? (
-          <div className="text-xs text-frost-dim font-mono py-4">Loading…</div>
-        ) : repos.length === 0 ? (
-          <div className="text-xs text-frost-dim font-mono py-4">
-            No repositories yet. Upload one above.
-          </div>
-        ) : (
-          repos.map((repo) => (
-            <div
-              key={repo.id}
-              className="flex items-center gap-3 px-4 py-3 glass rounded-lg"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-mono text-frost truncate">{repo.name}</p>
-                {repo.indexing_mode === "prioritized" ? (
-                  <div className="text-xs text-frost-dim mt-1 bg-ink-900 border border-ink-600 rounded p-2">
-                    <p className="mb-1">
-                      Repository contains {repo.total_files} files.
-                      CodeSense automatically selected and indexed the most relevant source files while skipping generated, vendor, and low-priority files.
-                    </p>
-                    <p className="font-mono text-plasma-light">
-                      Indexed: {repo.indexed_files} | Skipped: {repo.skipped_files}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-frost-dim">
-                    {repo.source} · {repo.total_files || 0} files · {timeAgo(repo.created_at)}
-                  </p>
-                )}
-              </div>
-              <StatusBadge status={repo.status} />
-              <button
-                onClick={() => handleDelete(repo.id, repo.name)}
-                disabled={deleting === repo.id}
-                className="text-xs font-mono text-frost-dim hover:text-danger transition-colors disabled:opacity-40"
-              >
-                {deleting === repo.id ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <X size={14} />
-                )}
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-export default function UploadPage() {
-  const [tab, setTab] = useState("github");
+  if (indexedRepo && ingestState === 'ready') {
+    return <RepositorySummary repo={indexedRepo} navigate={navigate} />;
+  }
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <SectionHeader
-        title="Upload Repository"
-        subtitle="Ingest a codebase for semantic search and AI analysis"
-      />
+      <div className="mb-10 text-center">
+        <h1 className="text-3xl font-bold text-slate-50 mb-3">Upload Repository</h1>
+        <p className="text-slate-400 max-w-xl mx-auto">
+          Ingest any codebase to enable semantic search, architecture discovery, and AI-powered exploration.
+        </p>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-        {/* Upload form */}
-        <div className="lg:col-span-3">
-          <Card>
-            {/* Tab selector */}
-            <div className="flex gap-2 mb-6">
-              {[
-                { key: "github", label: "GitHub URL", icon: Github },
-                { key: "zip", label: "ZIP Upload", icon: FolderOpen },
-              ].map(({ key, label, icon: Icon }) => (
-                <button
-                  key={key}
-                  onClick={() => setTab(key)}
-                  className={`flex items-center gap-2 text-sm font-mono px-4 py-2 rounded-lg transition-all ${
-                    tab === key
-                      ? "bg-acid text-ink-950 font-bold"
-                      : "text-frost-dim hover:text-frost hover:bg-ink-700"
-                  }`}
-                >
-                  <Icon size={14} />
-                  {label}
-                </button>
-              ))}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 mb-8">
+        {ingestState ? (
+          <IngestionProgress state={ingestState} />
+        ) : (
+          <div className="space-y-8">
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => !file && inputRef.current?.click()}
+              className={`relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+                dragOver
+                  ? "border-indigo-500 bg-indigo-500/10"
+                  : file
+                  ? "border-emerald-500/50 bg-emerald-500/5 cursor-default"
+                  : "border-slate-700 hover:border-indigo-500/50 hover:bg-slate-800/50"
+              }`}
+            >
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={handleFile}
+              />
+
+              {file ? (
+                <div>
+                  <Box size={40} className="text-emerald-400 mx-auto mb-4" />
+                  <p className="font-semibold text-slate-50 mb-1">{file.name}</p>
+                  <p className="text-sm text-slate-400 mb-4">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                    className="text-sm text-red-400 hover:text-red-300 font-medium flex items-center gap-1 mx-auto bg-red-400/10 px-3 py-1 rounded-full transition-colors"
+                  >
+                    <X size={14} /> Remove File
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <UploadIcon size={24} className="text-slate-400" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-slate-50 mb-2">
+                    Drag and Drop Area
+                  </h3>
+                  <p className="text-slate-400 mb-6">Drop a ZIP file here, or click to browse.</p>
+                  
+                  <div className="flex items-center justify-center gap-4 text-sm text-slate-500">
+                    <div className="h-px bg-slate-700 w-16" />
+                    <span>OR PASTE GITHUB URL</span>
+                    <div className="h-px bg-slate-700 w-16" />
+                  </div>
+                </>
+              )}
             </div>
 
-            {tab === "github" ? <GitHubForm /> : <ZipForm />}
-          </Card>
+            {!file && (
+              <div>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Github size={18} className="text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://github.com/owner/repository"
+                    className="w-full pl-11 pr-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-slate-50 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                  />
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={handleSubmit}
+              disabled={!file && !url.trim()}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all shadow-glow flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Analysis <UploadIcon size={18} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!ingestState && (
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-6 text-sm text-slate-400">
+          <span className="font-medium text-slate-300">Supported Languages:</span>
+          <div className="flex flex-wrap gap-4 justify-center">
+            {SUPPORTED_LANGUAGES.map(lang => (
+              <div key={lang} className="flex items-center gap-1.5">
+                <FileCode2 size={16} className="text-slate-500" /> {lang}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IngestionProgress({ state }) {
+  const steps = [
+    { id: 'cloning', label: 'Repository Cloned' },
+    { id: 'parsing', label: 'Files Parsed' },
+    { id: 'chunking', label: 'Code Chunked' },
+    { id: 'embedding', label: 'Generating Embeddings' },
+    { id: 'indexing', label: 'Building Search Index' }
+  ];
+
+  const currentIndex = steps.findIndex(s => s.id === state);
+
+  return (
+    <div className="py-8 max-w-sm mx-auto">
+      <h3 className="text-center text-xl font-semibold text-slate-50 mb-10">
+        Analyzing Codebase
+      </h3>
+      <div className="space-y-6">
+        {steps.map((step, idx) => {
+          const isCompleted = state === 'ready' || currentIndex > idx;
+          const isCurrent = currentIndex === idx;
+          const isPending = currentIndex !== -1 && currentIndex < idx;
+
+          return (
+            <div key={step.id} className="flex items-center gap-4">
+              <div className="w-8 flex justify-center">
+                {isCompleted ? (
+                  <CheckCircle2 size={24} className="text-emerald-500" />
+                ) : isCurrent ? (
+                  <RefreshCw size={20} className="text-indigo-400 animate-spin" />
+                ) : (
+                  <div className="w-5 h-5 rounded-full border-2 border-slate-700" />
+                )}
+              </div>
+              <span className={`text-lg font-medium transition-colors ${
+                isCompleted ? 'text-slate-300' : isCurrent ? 'text-indigo-400' : 'text-slate-600'
+              }`}>
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RepositorySummary({ repo, navigate }) {
+  return (
+    <div className="p-8 max-w-3xl mx-auto mt-10">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-10 text-center">
+        <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+          <CheckCircle2 size={40} className="text-emerald-400" />
+        </div>
+        <h2 className="text-3xl font-bold text-slate-50 mb-2">{repo.name || "Repository"}</h2>
+        <p className="text-slate-400 mb-10">Analysis complete and ready for exploration.</p>
+
+        <div className="grid grid-cols-3 gap-4 mb-10 text-left">
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5">
+            <span className="block text-slate-500 text-sm mb-1">Files Found</span>
+            <span className="text-2xl font-semibold text-slate-200">{repo.total_files || 0}</span>
+          </div>
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5">
+            <span className="block text-slate-500 text-sm mb-1">Files Indexed</span>
+            <span className="text-2xl font-semibold text-slate-200">{repo.indexed_files || 0}</span>
+          </div>
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5">
+            <span className="block text-slate-500 text-sm mb-1">Files Skipped</span>
+            <span className="text-2xl font-semibold text-slate-200">{repo.skipped_files || 0}</span>
+          </div>
         </div>
 
-        {/* Sidebar info + repo list */}
-        <div className="lg:col-span-2 space-y-5">
-          {/* Pipeline info */}
-          <Card>
-            <h3 className="font-mono text-xs font-bold text-frost-dim uppercase tracking-widest mb-4">
-              Ingestion Pipeline
-            </h3>
-            <div className="space-y-3">
-              {[
-                { step: "01", label: "Parse", desc: "Extracts Python, JS, C++, and more" },
-                { step: "02", label: "Chunk", desc: "Functions, classes, sliding windows" },
-                { step: "03", label: "Embed", desc: "sentence-transformers encoding" },
-                { step: "04", label: "Index", desc: "FAISS vector index" },
-                { step: "05", label: "Ready", desc: "Search, Q&A, analysis enabled" },
-              ].map(({ step, label, desc }) => (
-                <div key={step} className="flex gap-3">
-                  <span className="text-xs font-mono text-acid w-5 mt-0.5">{step}</span>
-                  <div>
-                    <span className="text-xs font-mono text-frost">{label}</span>
-                    <p className="text-xs text-frost-dim font-body">{desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <RepoList />
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <button onClick={() => navigate(`/search?repo=${repo.repo_id || repo.id}`)} className="flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors shadow-glow">
+            <Search size={18} /> Search
+          </button>
+          <button onClick={() => navigate(`/qa?repo=${repo.repo_id || repo.id}`)} className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium transition-colors">
+            <MessageSquare size={18} /> Ask Questions
+          </button>
+          <button onClick={() => navigate(`/architecture?repo=${repo.repo_id || repo.id}`)} className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium transition-colors">
+            <Building2 size={18} /> Architecture
+          </button>
         </div>
       </div>
     </div>

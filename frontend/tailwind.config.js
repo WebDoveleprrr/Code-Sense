@@ -4,64 +4,65 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        ink: {
-          950: "#050508",
-          900: "#0a0a12",
-          800: "#10101e",
-          700: "#181828",
-          600: "#22223a",
-          500: "#2e2e50",
+        slate: {
+          50: '#f8fafc',
+          100: '#f1f5f9',
+          200: '#e2e8f0',
+          300: '#cbd5e1',
+          400: '#94a3b8',
+          500: '#64748b',
+          600: '#475569',
+          700: '#334155',
+          800: '#1e293b',
+          900: '#0f172a',
+          950: '#020617',
         },
-        acid: {
-          DEFAULT: "#00ff88",
-          dim: "#00cc6a",
-          muted: "#00ff8820",
+        indigo: {
+          50: '#eef2ff',
+          100: '#e0e7ff',
+          500: '#6366f1',
+          600: '#4f46e5',
+          700: '#4338ca',
         },
-        plasma: {
-          DEFAULT: "#7c3aed",
-          light: "#a855f7",
-          muted: "#7c3aed20",
+        violet: {
+          500: '#8b5cf6',
+          600: '#7c3aed',
         },
-        signal: {
-          DEFAULT: "#f59e0b",
-          muted: "#f59e0b20",
+        cyan: {
+          400: '#22d3ee',
+          500: '#06b6d4',
         },
         danger: "#ef4444",
-        frost: {
-          DEFAULT: "#e2e8f0",
-          dim: "#94a3b8",
-          muted: "#e2e8f010",
-        },
+        warning: "#f59e0b",
+        success: "#10b981",
       },
       fontFamily: {
-        mono: ["'JetBrains Mono'", "'Fira Code'", "monospace"],
-        display: ["'Space Mono'", "monospace"],
-        body: ["'IBM Plex Sans'", "sans-serif"],
+        sans: ["'Inter'", "system-ui", "-apple-system", "sans-serif"],
+        mono: ["'JetBrains Mono'", "monospace"],
       },
       animation: {
-        "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-        "slide-up": "slideUp 0.3s ease-out",
-        "fade-in": "fadeIn 0.4s ease-out",
-        "scan": "scan 2s linear infinite",
+        "fade-in": "fadeIn 0.3s ease-out",
+        "slide-up": "slideUp 0.4s ease-out",
+        "pulse-subtle": "pulseSubtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
       },
       keyframes: {
         slideUp: {
-          "0%": { opacity: 0, transform: "translateY(12px)" },
+          "0%": { opacity: 0, transform: "translateY(10px)" },
           "100%": { opacity: 1, transform: "translateY(0)" },
         },
         fadeIn: {
           "0%": { opacity: 0 },
           "100%": { opacity: 1 },
         },
-        scan: {
-          "0%": { transform: "translateY(-100%)" },
-          "100%": { transform: "translateY(100vh)" },
-        },
+        pulseSubtle: {
+          "0%, 100%": { opacity: 1 },
+          "50%": { opacity: 0.8 },
+        }
       },
       boxShadow: {
-        acid: "0 0 20px rgba(0,255,136,0.15), 0 0 60px rgba(0,255,136,0.05)",
-        plasma: "0 0 20px rgba(124,58,237,0.2), 0 0 60px rgba(124,58,237,0.08)",
-        glass: "0 4px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)",
+        glass: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+        "glass-lg": "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+        glow: "0 0 15px rgba(99, 102, 241, 0.3)",
       },
     },
   },

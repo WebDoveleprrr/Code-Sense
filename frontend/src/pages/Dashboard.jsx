@@ -1,217 +1,166 @@
-// src/pages/Dashboard.jsx
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import {
-  Upload, Search, MessageSquare, Zap, GitBranch, Building2,
-  Database, Cpu, TrendingUp, Clock, CheckCircle, AlertCircle,
-  ArrowRight, Activity
-} from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Upload, Database, Search, Activity, Zap, Play, CheckCircle2, Clock } from "lucide-react";
 import { useRepositories } from "../hooks/useRepositories";
-import { Card, StatusBadge, Skeleton, Badge } from "../components/ui";
-import { healthApi } from "../services/api";
-import { timeAgo, formatMs } from "../utils/helpers";
-
-const QUICK_ACTIONS = [
-  { to: "/upload", icon: Upload, label: "Upload Repo", desc: "GitHub URL or ZIP file", color: "acid" },
-  { to: "/search", icon: Search, label: "Semantic Search", desc: "Natural language code search", color: "plasma" },
-  { to: "/qa", icon: MessageSquare, label: "Repo Q&A", desc: "Ask questions with RAG", color: "signal" },
-  { to: "/explain", icon: Zap, label: "Explain Code", desc: "AI-powered code explanation", color: "acid" },
-  { to: "/graph", icon: GitBranch, label: "Dependency Graph", desc: "Visual import mapping", color: "plasma" },
-  { to: "/architecture", icon: Building2, label: "Architecture", desc: "System structure summary", color: "signal" },
-];
-
-function StatCard({ label, value, icon: Icon, sub, color = "acid" }) {
-  const colorMap = {
-    acid: "text-acid bg-acid-muted border-acid/10",
-    plasma: "text-plasma-light bg-plasma-muted border-plasma/10",
-    signal: "text-signal bg-signal-muted border-signal/10",
-  };
-  return (
-    <Card>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs text-frost-dim font-mono uppercase tracking-widest mb-1">{label}</p>
-          <p className="text-3xl font-display font-bold text-frost">{value}</p>
-          {sub && <p className="text-xs text-frost-dim font-body mt-1">{sub}</p>}
-        </div>
-        <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${colorMap[color]}`}>
-          <Icon size={18} />
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function RepoRow({ repo }) {
-  return (
-    <Link
-      to={`/search?repo=${repo.id}`}
-      className="flex items-center gap-4 px-4 py-3 hover:bg-ink-700 rounded-lg transition-colors group"
-    >
-      <div className="w-8 h-8 rounded-lg bg-ink-700 border border-ink-500 flex items-center justify-center flex-shrink-0">
-        <Database size={14} className="text-frost-dim group-hover:text-acid transition-colors" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-mono text-frost truncate">{repo.name}</p>
-        <p className="text-xs text-frost-dim font-body">
-          {repo.total_chunks?.toLocaleString() || 0} chunks · {repo.total_files || 0} files · {timeAgo(repo.created_at)}
-        </p>
-      </div>
-      <StatusBadge status={repo.status} />
-      <ArrowRight size={14} className="text-ink-500 group-hover:text-acid transition-colors" />
-    </Link>
-  );
-}
+import { repositoriesApi, healthApi } from "../services/api";
+import { timeAgo } from "../utils/helpers";
+import toast from "react-hot-toast";
 
 export default function Dashboard() {
-  const { repos, loading } = useRepositories();
+  const { repos, loading, mutate } = useRepositories();
   const [health, setHealth] = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     healthApi.ping().then(setHealth).catch(() => {});
   }, []);
 
+  const handleExploreDemo = async () => {
+    const demoRepo = repos.find(r => r.name.toLowerCase().includes('fastapi') || r.name.toLowerCase().includes('demo'));
+    if (demoRepo) {
+      navigate(`/search?repo=${demoRepo.id}`);
+    } else {
+      try {
+        toast.loading("Provisioning Demo Repository (FastAPI)...", { id: "demo-toast" });
+        await repositoriesApi.ingestGitHub("https://github.com/tiangolo/fastapi", "master");
+        toast.success("Demo repository ingestion started!", { id: "demo-toast" });
+        mutate();
+      } catch (err) {
+        toast.error("Failed to provision demo repository.", { id: "demo-toast" });
+      }
+    }
+  };
+
   const readyRepos = repos.filter((r) => r.status === "ready");
-  const totalChunks = repos.reduce((s, r) => s + (r.total_chunks || 0), 0);
-  const totalLines = readyRepos.reduce((s, r) => s + (r.repo_metadata?.total_lines || 0), 0);
-  const totalFunctions = readyRepos.reduce((s, r) => s + (r.repo_metadata?.total_functions || 0), 0);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-2 h-2 rounded-full bg-acid status-dot-ready" />
-          <span className="text-xs font-mono text-frost-dim uppercase tracking-widest">
-            System {health ? "Online" : "Connecting…"}
-          </span>
-        </div>
-        <h1 className="font-display text-4xl font-bold text-frost tracking-tight">
-          CODESENSE{" "}
-          <span className="text-acid text-glow-acid">INTELLIGENCE</span>
+    <div className="p-8 max-w-7xl mx-auto font-sans">
+      {/* Hero Section */}
+      <section className="mb-16 mt-8">
+        <h1 className="text-4xl md:text-5xl font-bold text-slate-50 mb-4 tracking-tight">
+          Welcome back
         </h1>
-        <p className="text-frost-dim font-body mt-2 text-base">
-          AI-powered semantic repository intelligence platform
+        <p className="text-lg text-slate-400 mb-8 max-w-2xl">
+          Understand repositories instantly. Analyze architecture, search semantically, and review code quality with AI.
         </p>
-      </div>
+        <div className="flex flex-col sm:flex-row items-center gap-4">
+          <Link
+            to="/upload"
+            className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-all shadow-glow flex items-center justify-center gap-2"
+          >
+            <Upload size={18} /> Upload Repository
+          </Link>
+          <button
+            onClick={handleExploreDemo}
+            className="w-full sm:w-auto px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-medium transition-all flex items-center justify-center gap-2 border border-slate-700"
+          >
+            <Play size={18} className="text-indigo-400" /> Explore Demo Repository
+          </button>
+        </div>
+      </section>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          label="Indexed Repos"
-          value={loading ? "—" : repos.length}
-          icon={Database}
-          sub={`${readyRepos.length} ready to query`}
-          color="acid"
-        />
-        <StatCard
-          label="Code Chunks"
-          value={loading ? "—" : totalChunks.toLocaleString()}
-          icon={Cpu}
-          sub="Embedded vectors"
-          color="plasma"
-        />
-        <StatCard
-          label="Lines of Code"
-          value={loading ? "—" : totalLines.toLocaleString()}
-          icon={GitBranch}
-          sub="Indexed source lines"
-          color="acid"
-        />
-        <StatCard
-          label="Functions & Classes"
-          value={loading ? "—" : totalFunctions.toLocaleString()}
-          icon={Activity}
-          sub="Code structures analyzed"
-          color="signal"
-        />
-      </div>
+      {/* Repository Overview */}
+      <section>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold text-slate-50">Repository Overview</h2>
+          <div className="flex items-center gap-2 text-sm text-slate-400">
+            <div className={`w-2 h-2 rounded-full ${health ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-600"}`} />
+            {health ? "System Online" : "Connecting..."}
+          </div>
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* Quick Actions */}
-        <div className="lg:col-span-2">
-          <h2 className="font-display text-sm font-bold text-frost-dim uppercase tracking-widest mb-4">
-            Quick Actions
-          </h2>
-          <div className="space-y-2">
-            {QUICK_ACTIONS.map(({ to, icon: Icon, label, desc, color }) => (
-              <Link
-                key={to}
-                to={to}
-                className="flex items-center gap-3 px-4 py-3 glass rounded-xl hover:border-acid/20 transition-all group"
-              >
-                <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    color === "acid"
-                      ? "bg-acid-muted text-acid"
-                      : color === "plasma"
-                      ? "bg-plasma-muted text-plasma-light"
-                      : "bg-signal-muted text-signal"
-                  }`}
-                >
-                  <Icon size={15} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-mono text-frost group-hover:text-acid transition-colors">
-                    {label}
-                  </p>
-                  <p className="text-xs text-frost-dim font-body truncate">{desc}</p>
-                </div>
-                <ArrowRight
-                  size={14}
-                  className="text-ink-500 group-hover:text-acid transition-colors"
-                />
-              </Link>
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-48 bg-slate-900 border border-slate-800 rounded-2xl animate-pulse" />
             ))}
           </div>
-        </div>
-
-        {/* Recent Repositories */}
-        <div className="lg:col-span-3">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-display text-sm font-bold text-frost-dim uppercase tracking-widest">
-              Repositories
-            </h2>
-            <Link
-              to="/upload"
-              className="text-xs font-mono text-acid hover:text-acid-dim transition-colors flex items-center gap-1"
-            >
-              <Upload size={11} />
-              Add new
-            </Link>
+        ) : repos.length === 0 ? (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center">
+            <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Database size={24} className="text-slate-400" />
+            </div>
+            <h3 className="text-xl font-semibold text-slate-50 mb-2">No repositories indexed yet.</h3>
+            <p className="text-slate-400 max-w-md mx-auto mb-8">
+              Upload a repository to begin semantic analysis, architecture discovery, and AI-powered exploration.
+            </p>
+            <div className="flex justify-center gap-4">
+              <Link to="/upload" className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors">
+                Upload Repository
+              </Link>
+            </div>
           </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {repos.map(repo => (
+              <RepoCard key={repo.id} repo={repo} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
 
-          <Card className="p-0 overflow-hidden">
-            {loading ? (
-              <div className="p-4 space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-12" />
-                ))}
-              </div>
-            ) : repos.length === 0 ? (
-              <div className="flex flex-col items-center py-12 text-center px-6">
-                <Database size={32} className="text-ink-500 mb-3" />
-                <p className="text-frost font-mono text-sm mb-1">No repositories yet</p>
-                <p className="text-frost-dim text-xs font-body mb-4">
-                  Upload a GitHub repo or ZIP to get started
-                </p>
-                <Link
-                  to="/upload"
-                  className="text-xs font-mono text-acid hover:underline flex items-center gap-1"
-                >
-                  <Upload size={11} />
-                  Upload repository
-                </Link>
-              </div>
-            ) : (
-              <div className="p-2">
-                {repos.slice(0, 8).map((repo) => (
-                  <RepoRow key={repo.id} repo={repo} />
-                ))}
-              </div>
-            )}
-          </Card>
+function RepoCard({ repo }) {
+  const isReady = repo.status === "ready";
+  const language = repo.repo_metadata?.primary_language || "Python";
+  
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-indigo-500/50 transition-colors flex flex-col h-full">
+      <div className="flex justify-between items-start mb-4">
+        <h3 className="text-lg font-bold text-slate-50 truncate flex-1 pr-4" title={repo.name}>
+          {repo.name.split('/').pop() || repo.name}
+        </h3>
+        {isReady ? (
+          <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-full border border-emerald-400/20 shrink-0">
+            <CheckCircle2 size={12} /> Ready
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-xs font-medium text-indigo-400 bg-indigo-400/10 px-2.5 py-1 rounded-full border border-indigo-400/20 shrink-0">
+            <Clock size={12} /> Indexing
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 mb-6 text-sm text-slate-400">
+        <div>
+          <span className="block text-slate-500 text-xs mb-1">Language</span>
+          <span className="font-medium text-slate-300">{language}</span>
         </div>
+        <div>
+          <span className="block text-slate-500 text-xs mb-1">Indexed</span>
+          <span className="font-medium text-slate-300">{timeAgo(repo.created_at)}</span>
+        </div>
+        <div>
+          <span className="block text-slate-500 text-xs mb-1">Files</span>
+          <span className="font-medium text-slate-300">{repo.total_files || 0}</span>
+        </div>
+        <div>
+          <span className="block text-slate-500 text-xs mb-1">Chunks</span>
+          <span className="font-medium text-slate-300">{repo.total_chunks || 0}</span>
+        </div>
+      </div>
+
+      <div className="mt-auto pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
+        <Link 
+          to={`/search?repo=${repo.id}`}
+          className="flex-1 py-2 text-center text-sm font-medium text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
+        >
+          Search
+        </Link>
+        <Link 
+          to={`/qa?repo=${repo.id}`}
+          className="flex-1 py-2 text-center text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+        >
+          Ask
+        </Link>
+        <Link 
+          to={`/architecture?repo=${repo.id}`}
+          className="flex-1 py-2 text-center text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+        >
+          Analyze
+        </Link>
       </div>
     </div>
   );

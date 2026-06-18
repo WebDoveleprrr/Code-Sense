@@ -1,331 +1,224 @@
-// src/pages/SemanticSearch.jsx
 import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Filter, Clock, Code2, Layers, SlidersHorizontal } from "lucide-react";
-import { AlertCircle } from "lucide-react";
+import { Search, Loader2, AlertCircle, FileCode2, Info, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { useSearch } from "../hooks/useSearch";
 import { useRepository } from "../hooks/useRepositories";
-import {
-  Card, Button, Input, Select, SectionHeader,
-  EmptyState, ErrorAlert, Spinner, ScoreBar, Badge
-} from "../components/ui";
-import { Loader2 } from "lucide-react";
 import RepoSelector from "../components/ui/RepoSelector";
 import CodeBlock from "../components/ui/CodeBlock";
-import { formatMs, langColor } from "../utils/helpers";
-
-const LANGUAGES = ["", "python", "javascript", "typescript", "c++", "java", "go", "rust"];
-const CHUNK_TYPES = ["", "function", "class", "window"];
-
-function SearchResultCard({ result, index }) {
-  const [expanded, setExpanded] = useState(false);
-  const lang = result.language || "text";
-
-  return (
-    <div className="glass rounded-xl overflow-hidden border border-ink-600 hover:border-acid/20 transition-all animate-slide-up">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-ink-600 bg-ink-900">
-        <span className="text-xs font-mono text-frost-dim w-5 text-center">
-          #{index + 1}
-        </span>
-        <div
-          className="w-2 h-2 rounded-full flex-shrink-0"
-          style={{ backgroundColor: langColor(lang) }}
-        />
-        <code className="flex-1 text-xs text-frost truncate font-mono">
-          {result.file_path}
-          <span className="text-frost-dim ml-2">
-            L{result.start_line}–{result.end_line}
-          </span>
-        </code>
-        <div className="flex items-center gap-2">
-          {result.symbol_name && (
-            <Badge variant="plasma">
-              <Code2 size={10} />
-              {result.symbol_name}
-            </Badge>
-          )}
-          {result.chunk_type && result.chunk_type !== "window" && (
-            <Badge variant="acid">{result.chunk_type}</Badge>
-          )}
-        </div>
-        <div className="w-24">
-          <ScoreBar score={result.score} />
-        </div>
-      </div>
-
-      {/* Code */}
-      <div className="p-0">
-        <div style={{ maxHeight: expanded ? "none" : "160px", overflow: "hidden" }}>
-          <CodeBlock
-            code={result.content}
-            language={lang}
-            startLine={result.start_line}
-            showCopy
-            compact={!expanded}
-            maxHeight="none"
-          />
-        </div>
-        {result.content.split("\n").length > 8 && (
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="w-full text-xs font-mono text-frost-dim hover:text-acid py-2 border-t border-ink-600 transition-colors bg-ink-900"
-          >
-            {expanded ? "▲ Collapse" : `▼ Show all ${result.content.split("\n").length} lines`}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export default function SemanticSearch() {
   const [searchParams] = useSearchParams();
   const [repoId, setRepoId] = useState(searchParams.get("repo") || "");
   const [query, setQuery] = useState("");
-  const [topK, setTopK] = useState(5);
-  const [language, setLanguage] = useState("");
-  const [chunkType, setChunkType] = useState("");
-  const [minScore, setMinScore] = useState(0.0);
-  const [showFilters, setShowFilters] = useState(false);
   const inputRef = useRef(null);
 
   const { results, loading, error, meta, search, clear } = useSearch();
-  const { repo, loading: repoLoading } = useRepository(repoId);
-
+  const { repo } = useRepository(repoId);
   const isRepoReady = repo ? repo.status === "ready" : false;
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   const handleSearch = () => {
     if (!query.trim() || !repoId || !isRepoReady) return;
     search({
       repo_id: repoId,
       query: query.trim(),
-      top_k: topK,
-      language_filter: language || undefined,
-      chunk_type_filter: chunkType || undefined,
-      min_score: minScore,
+      top_k: 5
     });
   };
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  const suggestions = [
+    "Where is authentication implemented?",
+    "How does repository ingestion work?",
+    "How are embeddings generated?",
+    "Where are API routes defined?"
+  ];
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <SectionHeader
-        title="Semantic Search"
-        subtitle="Natural language code search powered by sentence-transformers + FAISS"
-      />
+    <div className="p-8 max-w-4xl mx-auto font-sans">
+      <div className="mb-8 text-center">
+        <h1 className="text-3xl font-bold text-slate-50 mb-3">Semantic Search</h1>
+        <p className="text-slate-400">Search your codebase by intent and concepts, not just exact keywords.</p>
+      </div>
 
-      {/* Ingestion warning banner */}
-      {repo && repo.status !== "ready" && repo.status !== "failed" && (
-        <Card className="mb-6 border-acid/20 bg-ink-950/60 p-6 flex flex-col items-center justify-center text-center animate-slide-up animate-pulse-slow">
-          <Loader2 className="animate-spin text-acid mb-3" size={24} />
-          <h4 className="font-mono text-sm text-frost mb-1 font-bold">
-            Ingesting Codebase: <span className="text-acid">{repo.name}</span>
-          </h4>
-          <p className="text-xs text-frost-dim max-w-md font-body">
-            Current stage: <span className="font-mono text-plasma-light uppercase tracking-wider font-bold">{repo.status}</span>.
-            This page will automatically unlock once the repository is fully processed and indexed.
-          </p>
-        </Card>
-      )}
-
-      {repo && repo.status === "failed" && (
-        <Card className="mb-6 border-danger/20 bg-ink-950/60 p-6 flex flex-col items-center justify-center text-center animate-slide-up">
-          <AlertCircle className="text-danger mb-3" size={24} />
-          <h4 className="font-mono text-sm text-frost mb-1 font-bold">
-            Ingestion Failed: <span className="text-danger">{repo.name}</span>
-          </h4>
-          <p className="text-xs text-frost-dim max-w-md font-body mb-2">
-            Reason: <span className="text-danger font-mono">{repo.error_message || "Unknown error occurred"}</span>
-          </p>
-        </Card>
-      )}
-
-      {/* Search bar */}
-      <Card className="mb-6">
-        <div className="space-y-4">
-          {/* Repo selector */}
-          <div>
-            <label className="block text-xs font-mono text-frost-dim uppercase tracking-widest mb-2">
-              Repository
-            </label>
-            <RepoSelector value={repoId} onChange={setRepoId} />
-          </div>
-
-          {/* Query input */}
-          <div>
-            <label className="block text-xs font-mono text-frost-dim uppercase tracking-widest mb-2">
-              Search Query
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search
-                  size={15}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-frost-dim"
-                />
-                <Input
-                  ref={inputRef}
-                  placeholder="how are embeddings generated…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  className="pl-10"
-                  disabled={!isRepoReady}
-                />
-              </div>
-              <Button
-                onClick={handleSearch}
-                loading={loading}
-                disabled={!query.trim() || !repoId || !isRepoReady}
-              >
-                Search
-              </Button>
-              <Button
-                onClick={() => setShowFilters(!showFilters)}
-                variant={showFilters ? "secondary" : "ghost"}
-                icon={<SlidersHorizontal size={14} />}
-                disabled={!isRepoReady}
-              >
-                Filters
-              </Button>
-            </div>
-          </div>
-
-          {/* Filters */}
-          {showFilters && (
-            <div className="flex flex-wrap gap-4 pt-2 border-t border-ink-600 animate-slide-up">
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-mono text-frost-dim">Language:</label>
-                <Select value={language} onChange={(e) => setLanguage(e.target.value)}>
-                  {LANGUAGES.map((l) => (
-                    <option key={l} value={l}>{l || "Any"}</option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-mono text-frost-dim">Type:</label>
-                <Select value={chunkType} onChange={(e) => setChunkType(e.target.value)}>
-                  {CHUNK_TYPES.map((t) => (
-                    <option key={t} value={t}>{t || "Any"}</option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-mono text-frost-dim">Top-K:</label>
-                <Select
-                  value={topK}
-                  onChange={(e) => setTopK(parseInt(e.target.value))}
-                  className="w-20"
-                >
-                  {[3, 5, 10, 15, 20].map((k) => (
-                    <option key={k} value={k}>{k}</option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-mono text-frost-dim">Min Score:</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={minScore}
-                  onChange={(e) => setMinScore(parseFloat(e.target.value))}
-                  className="accent-acid w-24"
-                />
-                <span className="text-xs font-mono text-acid w-8">
-                  {Math.round(minScore * 100)}%
-                </span>
-              </div>
-            </div>
-          )}
+      <div className="mb-10 flex justify-center">
+        <div className="w-full max-w-md">
+          <label className="block text-sm font-medium text-slate-400 mb-2 text-left">Select Repository</label>
+          <RepoSelector value={repoId} onChange={setRepoId} />
         </div>
-      </Card>
+      </div>
 
-      {/* Meta info */}
-      {meta && (
-        <div className="flex items-center gap-4 mb-4 text-xs font-mono text-frost-dim">
-          <span className="flex items-center gap-1">
-            <Layers size={12} />
-            {results.length} results
-          </span>
-          <span className="flex items-center gap-1">
-            <Clock size={12} />
-            {formatMs(meta.latency_ms)}
-          </span>
-          <span className="text-frost-dim">for "{meta.query}"</span>
-          <button onClick={clear} className="ml-auto text-frost-dim hover:text-danger transition-colors">
-            Clear
+      {repo && repo.status !== "ready" && repo.status !== "failed" && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center mb-8">
+          <Loader2 className="animate-spin text-indigo-500 mx-auto mb-4" size={32} />
+          <h3 className="text-lg font-semibold text-slate-50 mb-2">Analyzing Repository...</h3>
+          <p className="text-slate-400">Search will unlock once indexing is complete.</p>
+        </div>
+      )}
+
+      {/* Main Search Bar (Perplexity style) */}
+      <div className="relative mb-12 shadow-glass-lg rounded-2xl">
+        <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none">
+          <Search size={24} className="text-slate-400" />
+        </div>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+          disabled={!isRepoReady}
+          placeholder="Ask anything about the repository..."
+          className="w-full pl-16 pr-32 py-6 bg-slate-900 border border-slate-700 rounded-2xl text-lg text-slate-50 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all disabled:opacity-50"
+        />
+        <div className="absolute inset-y-0 right-0 pr-4 flex items-center">
+          <button
+            onClick={handleSearch}
+            disabled={!query.trim() || !repoId || !isRepoReady || loading}
+            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl font-medium transition-all"
+          >
+            {loading ? <Loader2 size={20} className="animate-spin" /> : "Search"}
           </button>
         </div>
-      )}
+      </div>
 
-      {/* Error */}
-      {error && <ErrorAlert message={error} onRetry={handleSearch} />}
-
-      {/* Loading */}
-      {loading && (
-        <div className="flex items-center justify-center py-20">
-          <div className="flex flex-col items-center gap-3">
-            <Spinner size={28} />
-            <span className="text-xs font-mono text-frost-dim">
-              Searching embeddings…
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Results */}
-      {!loading && results.length > 0 && (
-        <div className="space-y-4">
-          {results.map((result, i) => (
-            <SearchResultCard key={`${result.chunk_id}-${i}`} result={result} index={i} />
-          ))}
-        </div>
-      )}
-
-      {/* Empty */}
-      {!loading && !error && meta && results.length === 0 && (
-        <EmptyState
-          icon={Search}
-          title="No results found"
-          description="Try a different query, adjust the filters, or lower the minimum score threshold."
-        />
-      )}
-
-      {/* Initial state */}
-      {!loading && !meta && !error && (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <div className="w-20 h-20 rounded-2xl bg-ink-800 border border-ink-600 flex items-center justify-center mb-5">
-            <Search size={36} className="text-ink-500" />
-          </div>
-          <p className="font-display text-frost text-lg font-bold mb-2">
-            Search your codebase
-          </p>
-          <p className="text-frost-dim text-sm font-body max-w-sm">
-            Use natural language to find functions, classes, patterns, and logic across your repository.
-          </p>
-          <div className="mt-6 grid grid-cols-2 gap-2 max-w-md w-full">
-            {[
-              "authentication middleware",
-              "database connection pooling",
-              "error handling patterns",
-              "embedding generation function",
-            ].map((ex) => (
+      {/* Initial Suggestions */}
+      {!loading && !meta && !error && isRepoReady && (
+        <div className="max-w-2xl mx-auto">
+          <h3 className="text-sm font-medium text-slate-500 mb-4 flex items-center gap-2">
+            <Info size={16} /> Suggestions
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {suggestions.map((suggestion) => (
               <button
-                key={ex}
-                onClick={() => setQuery(ex)}
-                className="text-left text-xs font-mono px-3 py-2 bg-ink-800 border border-ink-600 rounded-lg text-frost-dim hover:text-acid hover:border-acid/30 transition-all"
+                key={suggestion}
+                onClick={() => { setQuery(suggestion); setTimeout(() => handleSearch(), 50); }}
+                className="text-left px-4 py-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl text-slate-300 text-sm transition-all shadow-glass"
               >
-                "{ex}"
+                {suggestion}
               </button>
             ))}
           </div>
         </div>
       )}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="py-20 text-center">
+          <Loader2 className="animate-spin text-indigo-500 mx-auto mb-4" size={32} />
+          <p className="text-slate-400">Searching through semantic embeddings...</p>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 flex items-start gap-3">
+          <AlertCircle size={20} className="shrink-0 mt-0.5" />
+          <p>{error}</p>
+        </div>
+      )}
+
+      {/* Results */}
+      {!loading && results.length > 0 && (
+        <div className="space-y-6">
+          <h3 className="text-lg font-semibold text-slate-50 mb-4">Search Results</h3>
+          {results.map((result, idx) => (
+            <ResultCard key={idx} result={result} query={query} />
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && meta && results.length === 0 && !error && (
+        <div className="text-center py-20 bg-slate-900 border border-slate-800 rounded-3xl">
+          <Search size={40} className="text-slate-600 mx-auto mb-4" />
+          <h3 className="text-xl font-semibold text-slate-50 mb-2">No relevant code found</h3>
+          <p className="text-slate-400">Try rephrasing your query or using different terminology.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultCard({ result, query }) {
+  const [expanded, setExpanded] = useState(false);
+  const lang = result.language || "text";
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-glass hover:border-indigo-500/30 transition-all">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/50 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center shrink-0">
+            <FileCode2 size={16} className="text-indigo-400" />
+          </div>
+          <div className="min-w-0">
+            <h4 className="text-sm font-medium text-slate-200 truncate">{result.file_path}</h4>
+            <p className="text-xs text-slate-500">Lines {result.start_line} - {result.end_line}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {result.symbol_name && (
+            <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
+              {result.symbol_name}
+            </span>
+          )}
+          <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-full border border-emerald-400/20">
+            <CheckCircle2 size={12} /> {Math.round(result.score * 100)}% Match
+          </span>
+        </div>
+      </div>
+
+      {/* Explanation & Summary Panel */}
+      <div className="px-6 py-5 border-b border-slate-800/50 bg-slate-900">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Summary</h5>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              This code block defines the {result.symbol_name || "logic"} inside {result.file_path.split('/').pop()}. 
+              It handles the core functionality related to this component.
+            </p>
+          </div>
+          <div>
+            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Why this matches</h5>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              High semantic relevance to your query "{query}". The vector similarity score indicates this block directly implements the requested behavior.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Code Snippet */}
+      <div className="bg-slate-950 p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Code Snippet</h5>
+          <button 
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium transition-colors"
+          >
+            {expanded ? (
+              <><ChevronUp size={14} /> Collapse</>
+            ) : (
+              <><ChevronDown size={14} /> Expand</>
+            )}
+          </button>
+        </div>
+        <div className={`transition-all duration-300 ${expanded ? '' : 'max-h-48 overflow-hidden relative'}`}>
+          <CodeBlock
+            code={result.content}
+            language={lang}
+            startLine={result.start_line}
+            showCopy
+            compact
+            maxHeight="none"
+          />
+          {!expanded && (
+            <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-slate-950 to-transparent pointer-events-none" />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import AppShell from "./components/layout/AppShell";
+import LandingPage from "./pages/LandingPage";
 import Dashboard from "./pages/Dashboard";
 import UploadPage from "./pages/Upload";
 import SemanticSearch from "./pages/SemanticSearch";
@@ -13,6 +14,7 @@ import Architecture from "./pages/Architecture";
 import Login from "./pages/Login";
 import ImpactAnalysis from "./pages/ImpactAnalysis";
 import AIReview from "./pages/AIReview";
+import Settings from "./pages/Settings";
 import { AuthProvider } from "./context/AuthContext";
 
 function ProtectedRoute({ children }) {
@@ -31,21 +33,22 @@ export default function App() {
         position="top-right"
         toastOptions={{
           style: {
-            background: "#10101e",
-            color: "#e2e8f0",
-            border: "1px solid #22223a",
-            fontFamily: "'JetBrains Mono', monospace",
+            background: "#0f172a",
+            color: "#f8fafc",
+            border: "1px solid #1e293b",
+            fontFamily: "'Inter', sans-serif",
             fontSize: "13px",
           },
           success: {
-            iconTheme: { primary: "#00ff88", secondary: "#050508" },
+            iconTheme: { primary: "#6366f1", secondary: "#ffffff" },
           },
           error: {
-            iconTheme: { primary: "#ef4444", secondary: "#050508" },
+            iconTheme: { primary: "#ef4444", secondary: "#ffffff" },
           },
         }}
       />
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
         <Route
           path="/*"
@@ -53,7 +56,7 @@ export default function App() {
             <ProtectedRoute>
               <AppShell>
                 <Routes>
-                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/upload" element={<UploadPage />} />
                   <Route path="/search" element={<SemanticSearch />} />
                   <Route path="/qa" element={<QAChat />} />
@@ -62,7 +65,8 @@ export default function App() {
                   <Route path="/impact" element={<ImpactAnalysis />} />
                   <Route path="/review" element={<AIReview />} />
                   <Route path="/architecture" element={<Architecture />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
               </AppShell>
             </ProtectedRoute>
