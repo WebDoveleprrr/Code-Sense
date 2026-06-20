@@ -1,5 +1,5 @@
 // src/App.jsx
-import React from "react";
+import React, { useContext } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import AppShell from "./components/layout/AppShell";
@@ -15,11 +15,11 @@ import Login from "./pages/Login";
 import ImpactAnalysis from "./pages/ImpactAnalysis";
 import AIReview from "./pages/AIReview";
 import Settings from "./pages/Settings";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider, AuthContext } from "./context/AuthContext";
 
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem("access_token");
-  if (!token) {
+  const { authenticated } = useContext(AuthContext);
+  if (!authenticated) {
     return <Navigate to="/login" replace />;
   }
   return children;

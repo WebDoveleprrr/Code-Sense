@@ -6,6 +6,7 @@ export const AuthContext = createContext({
   refreshing: false,
   expired: false,
   user: null,
+  login: (accessToken, refreshToken, user) => {},
   restoreSession: async () => {},
   logout: () => {},
 });
@@ -22,6 +23,15 @@ export function AuthProvider({ children }) {
       return null;
     }
   });
+
+  const login = useCallback((accessToken, refreshToken, userData) => {
+    localStorage.setItem("access_token", accessToken);
+    localStorage.setItem("refresh_token", refreshToken);
+    localStorage.setItem("user", JSON.stringify(userData));
+    setAuthenticated(true);
+    setUser(userData);
+    setExpired(false);
+  }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem("access_token");
@@ -74,7 +84,7 @@ export function AuthProvider({ children }) {
   }, [restoreSession, logout]);
 
   return (
-    <AuthContext.Provider value={{ authenticated, refreshing, expired, user, restoreSession, logout }}>
+    <AuthContext.Provider value={{ authenticated, refreshing, expired, user, login, restoreSession, logout }}>
       {refreshing && (
         <div className="fixed top-0 left-0 w-full z-50 bg-acid text-ink-950 py-1.5 px-4 text-center font-mono text-xs font-bold animate-slide-down shadow-md">
           Restoring session...

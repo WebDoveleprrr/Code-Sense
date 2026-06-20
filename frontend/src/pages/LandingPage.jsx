@@ -1,8 +1,15 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useContext } from 'react';
+import { Link, Navigate } from 'react-router-dom';
 import { Search, Building2, Zap, LayoutDashboard, Database, ArrowRight, ShieldAlert, GitBranch } from 'lucide-react';
+import { AuthContext } from '../context/AuthContext';
 
 export default function LandingPage() {
+  const { authenticated } = useContext(AuthContext);
+
+  if (authenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 font-sans selection:bg-indigo-500/30">
       {/* Navigation */}

@@ -1,17 +1,16 @@
-import React, { useState } from "react";
+import React, { useState, useContext } from "react";
 import Sidebar from "./Sidebar";
 import { useNavigate } from "react-router-dom";
 import { LogOut, Settings, User } from "lucide-react";
+import { AuthContext } from "../../context/AuthContext";
 
 export default function AppShell({ children }) {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
-  const user = JSON.parse(localStorage.getItem("user") || "null");
+  const { user, logout } = useContext(AuthContext);
 
   const handleLogout = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("user");
+    logout();
     navigate("/login");
   };
 

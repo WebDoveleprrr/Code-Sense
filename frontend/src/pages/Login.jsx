@@ -1,11 +1,12 @@
-// src/pages/Login.jsx
-import React, { useState } from "react";
+import React, { useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { GoogleLogin } from "@react-oauth/google";
+import { AuthContext } from "../context/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login } = useContext(AuthContext);
   const [loading, setLoading] = useState(false);
   const [mockEmail, setMockEmail] = useState("developer@codesense.ai");
   const isDev = import.meta.env.DEV === true;
@@ -23,12 +24,10 @@ export default function Login() {
       });
       const data = await response.json();
       if (response.ok) {
-        localStorage.setItem("access_token", data.access_token);
-        localStorage.setItem("refresh_token", data.refresh_token);
-        localStorage.setItem("user", JSON.stringify(data.user));
+        login(data.access_token, data.refresh_token, data.user);
         toast.success(`Welcome back, ${data.user.name}!`);
         // Navigate to dashboard
-        navigate("/");
+        navigate("/dashboard");
       } else {
         toast.error(data.detail || "Authentication failed");
       }
@@ -50,12 +49,10 @@ export default function Login() {
       });
       const data = await response.json();
       if (response.ok) {
-        localStorage.setItem("access_token", data.access_token);
-        localStorage.setItem("refresh_token", data.refresh_token);
-        localStorage.setItem("user", JSON.stringify(data.user));
+        login(data.access_token, data.refresh_token, data.user);
         toast.success(`Welcome back, ${data.user.name}!`);
         // Navigate to dashboard
-        navigate("/");
+        navigate("/dashboard");
       } else {
         toast.error(data.detail || "Authentication failed");
       }
