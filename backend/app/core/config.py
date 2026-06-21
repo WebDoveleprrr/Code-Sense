@@ -48,11 +48,13 @@ class Settings(BaseSettings):
     # LLM Settings
     # ------------------------------------------------------------------ #
     ENABLE_LLM: bool = True
-    LLM_PROVIDER: str = "ollama"
+    LLM_PROVIDER: str = "gemini"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.1:8b"
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     LLM_MAX_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.2
 

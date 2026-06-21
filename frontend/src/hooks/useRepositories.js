@@ -32,7 +32,7 @@ export function useRepositories() {
 
     const interval = setInterval(() => {
       fetchRepos(true);
-    }, 4000);
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [repos, fetchRepos]);
@@ -69,7 +69,7 @@ export function useRepository(repoId) {
 
     const interval = setInterval(() => {
       fetchRepo(true);
-    }, 3000);
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [repo, repoId, fetchRepo]);

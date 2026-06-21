@@ -223,29 +223,46 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     # Step 9 — Persist chunks to MongoDB
     # ---------------------------------------------------------------- #
     logger.info("[{id}] MONGODB UPDATE START", id=repo_id)
-    chunk_docs = [
-        ChunkDocument(
-            repo_id=repo_id,
-            file_path=c["file_path"],
-            language=c.get("language"),
-            start_line=c["start_line"],
-            end_line=c["end_line"],
-            content=c["content"],
-            chunk_index=c["chunk_index"],
-            token_count=c.get("token_count", 0),
-            faiss_id=idx,
-            # v2 enriched fields
-            chunk_type=c.get("chunk_type", "window"),
-            symbol_name=c.get("symbol_name"),
-            symbol_metadata=c.get("metadata", {}),
-        )
-        for idx, c in enumerate(chunks)
-    ]
-    await ChunkDocument.insert_many(chunk_docs)
-    logger.info("[{id}] {n} ChunkDocuments persisted.", id=repo_id, n=len(chunk_docs))
+    
+    BATCH_SIZE = 500
+    chunk_ids = []
+    
+    for i in range(0, len(chunks), BATCH_SIZE):
+        batch_chunks = chunks[i : i + BATCH_SIZE]
+        chunk_docs = [
+            ChunkDocument(
+                repo_id=repo_id,
+                file_path=c["file_path"],
+                language=c.get("language"),
+                start_line=c["start_line"],
+                end_line=c["end_line"],
+                content=c["content"],
+                chunk_index=c["chunk_index"],
+                token_count=c.get("token_count", 0),
+                faiss_id=idx + i,
+                # v2 enriched fields
+                chunk_type=c.get("chunk_type", "window"),
+                symbol_name=c.get("symbol_name"),
+                symbol_metadata=c.get("metadata", {}),
+            )
+            for idx, c in enumerate(batch_chunks)
+        ]
+        
+        # Insert batch
+        await ChunkDocument.insert_many(chunk_docs)
+        chunk_ids.extend([str(doc.id) for doc in chunk_docs])
+        
+        logger.info("[{id}] Inserted {n} ChunkDocuments (batch {batch}).", id=repo_id, n=len(chunk_docs), batch=i // BATCH_SIZE + 1)
+        
+        # Free memory explicitly
+        del batch_chunks
+        del chunk_docs
+        import gc
+        gc.collect()
+
+    logger.info("[{id}] Total {n} ChunkDocuments persisted.", id=repo_id, n=len(chunk_ids))
 
     # Back-fill MongoDB chunk IDs into MetadataStore sidecar
-    chunk_ids = [str(doc.id) for doc in chunk_docs]
     meta_store.patch_chunk_ids(chunk_ids)
     meta_store.save()
     logger.info("[{id}] MetadataStore sidecar saved.", id=repo_id)

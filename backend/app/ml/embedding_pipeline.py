@@ -100,18 +100,18 @@ def generate_embeddings_stream(
     embedder = get_embedder()
     t0 = time.perf_counter()
 
-    texts = prepare_texts(chunks)
     logger.info(
         "Embedding pipeline: {n} chunks, model={m}, batch_size={b}",
-        n=len(texts),
+        n=len(chunks),
         m=embedder.model_name,
         b=embedder._batch_size,
     )
 
     batch_size = embedder._batch_size
 
-    for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i : i + batch_size]
+    for i in range(0, len(chunks), batch_size):
+        batch_chunks = chunks[i : i + batch_size]
+        batch_texts = prepare_texts(batch_chunks)
         batch_vectors = embedder.embed_batch(batch_texts, normalize=True, show_progress=False)
         
         # Sanity checks
@@ -121,6 +121,7 @@ def generate_embeddings_stream(
         
         # Free memory explicitly after each batch
         del batch_texts
+        del batch_chunks
         del batch_vectors
         gc.collect()
 
