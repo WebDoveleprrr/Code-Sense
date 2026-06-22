@@ -32,9 +32,28 @@ from app.ml.embedder import get_embedder
 MAX_CHARS_PER_CHUNK = 2_000
 
 
-# ---------------------------------------------------------------------------
-# Text preparation helpers
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+# LINES 39-72
+# PURPOSE:
+# Prepares the raw code text for the embedding model by injecting metadata
+# (language, symbol name) directly into the string.
+#
+# WHY IT EXISTS:
+# Dense retrieval models (like SentenceTransformers) only understand flat strings.
+# If a chunk of code is just `return x + y`, the model has no idea this belongs
+# to `calculate_total` in `Python`. By prefixing the chunk with `[Python]\nfunction: calculate_total\n`,
+# we inject semantic context into the vector itself. This dramatically improves
+# search relevance when a user asks "how is the total calculated?".
+#
+# INTERVIEW QUESTION:
+# "How do you handle metadata during vector retrieval?"
+#
+# GOOD ANSWER:
+# "We use a hybrid approach. Hard filters (like repo_id or language) are handled
+# by the vector database's metadata filtering (FAISS or MongoDB). Soft semantic
+# metadata (like function names) are concatenated into the actual text string
+# before embedding, ensuring the model's spatial mapping groups related concepts."
+# ─────────────────────────────────────────────
 
 def _prepare_text(chunk: Dict[str, Any]) -> str:
     """
@@ -47,6 +66,9 @@ def _prepare_text(chunk: Dict[str, Any]) -> str:
       - All texts are truncated to MAX_CHARS_PER_CHUNK to keep
         token budgets within the model's context window.
     """
+    # FUNCTION PURPOSE:
+    # Formats a single dictionary into an embedding-optimized string.
+    
     content: str = chunk.get("content", "")
     chunk_type: str = chunk.get("chunk_type", "window")
     symbol_name: Optional[str] = chunk.get("symbol_name")
@@ -63,7 +85,10 @@ def _prepare_text(chunk: Dict[str, Any]) -> str:
     parts.append(content)
 
     text = "\n".join(parts)
-    # Truncate — avoid feeding entire files into one chunk by mistake
+    
+    # Truncate — avoid feeding entire files into one chunk by mistake.
+    # The SentenceTransformer tokenizer truncates anyway, but doing it here
+    # saves CPU cycles and string allocation memory.
     return text[:MAX_CHARS_PER_CHUNK]
 
 
@@ -72,9 +97,25 @@ def prepare_texts(chunks: List[Dict[str, Any]]) -> List[str]:
     return [_prepare_text(c) for c in chunks]
 
 
-# ---------------------------------------------------------------------------
-# Core pipeline function
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+# LINES 79-135
+# PURPOSE:
+# A generator that batches text preparation and embedding.
+#
+# WHY IT EXISTS:
+# In earlier versions, we tried to embed 5,000 chunks by passing the entire
+# list to `embedder.embed_batch`. This caused a massive RAM spike (holding
+# 5,000 long strings + 5,000 float32 vectors + intermediate tokenizer tensors
+# simultaneously) resulting in Render container crashes.
+# 
+# ARCHITECTURE NOTE:
+# Using the `yield` generator pattern forces Python to process, yield, and
+# garbage collect one batch (e.g., 32 vectors) at a time, completely flatlining
+# the memory footprint regardless of repository size.
+# 
+# USED BY:
+# `pipeline.py` (Step 6)
+# ─────────────────────────────────────────────
 
 def generate_embeddings_stream(
     chunks: List[Dict[str, Any]],
@@ -111,15 +152,23 @@ def generate_embeddings_stream(
 
     for i in range(0, len(chunks), batch_size):
         batch_chunks = chunks[i : i + batch_size]
+        
+        # CPU-bound text concatenation
         batch_texts = prepare_texts(batch_chunks)
+        
+        # Heavy ML tensor computation (SentenceTransformers/PyTorch)
+        # Note: normalize=True is critical. Without L2 normalization,
+        # FAISS inner product search will not equal Cosine Similarity.
         batch_vectors = embedder.embed_batch(batch_texts, normalize=True, show_progress=False)
         
         # Sanity checks
         assert batch_vectors.dtype == np.float32, "Embeddings must be float32"
         
+        # Yield to allow `pipeline.py` to insert into FAISS
         yield batch_vectors, list(range(i, i + len(batch_texts)))
         
-        # Free memory explicitly after each batch
+        # Free memory explicitly after each batch.
+        # This prevents the generator from keeping references to tensors alive.
         del batch_texts
         del batch_chunks
         del batch_vectors
@@ -144,6 +193,10 @@ def embed_query(query: str) -> np.ndarray:
     Strips leading/trailing whitespace and applies L2 normalisation.
     Returns shape (dim,), float32.
     """
+    # FUNCTION PURPOSE:
+    # Used during search/RAG to convert a user's typed question into a vector.
+    # Must use the exact same embedder instance and normalization flag as the pipeline.
+    
     embedder = get_embedder()
     cleaned = query.strip()
     if not cleaned:

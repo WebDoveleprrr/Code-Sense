@@ -1,14 +1,14 @@
 // src/components/ui/RepoSelector.jsx
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react"; //useref stores ref or address to html element
 import { ChevronDown, Database, CheckCircle } from "lucide-react";
 import { useRepositories } from "../../hooks/useRepositories";
 import { statusDot } from "../../utils/helpers";
 
 export default function RepoSelector({ value, onChange, filterStatus = "ready" }) {
-  const { repos, loading } = useRepositories();
-  const [open, setOpen] = useState(false);
+  const { repos, loading } = useRepositories(); //current selected repo get /repo
+  const [open, setOpen] = useState(false); //controls dropdowm
   const ref = useRef(null);
-
+  //filtered based on status of repo(embedded or finished etc)
   const filtered = filterStatus
     ? repos.filter((r) => r.status === filterStatus)
     : repos;
@@ -42,7 +42,7 @@ export default function RepoSelector({ value, onChange, filterStatus = "ready" }
           className={`ml-auto text-frost-dim transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
-
+        //dropdown list
       {open && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-ink-800 border border-ink-600 rounded-xl shadow-glass z-50 overflow-hidden max-h-64 overflow-y-auto">
           {filtered.length === 0 ? (

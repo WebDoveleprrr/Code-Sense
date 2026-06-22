@@ -15,6 +15,28 @@ from pydantic import AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# ─────────────────────────────────────────────
+# LINES 18-128
+# PURPOSE:
+# Defines the global configuration schema for the backend using Pydantic.
+#
+# WHY IT EXISTS:
+# Instead of scattering `os.getenv("VARIABLE")` randomly throughout the
+# codebase (which causes runtime crashes if a variable is missing), Pydantic
+# validates the environment at startup. If `APP_PORT` is set to "hello", 
+# Pydantic throws a ValidationError instantly during boot, enforcing type safety.
+#
+# ARCHITECTURE NOTE:
+# This file is the single source of truth for all configurable thresholds:
+# ML parameters (chunk sizes), API keys, Database URIs, and Paths.
+#
+# INTERVIEW NOTE:
+# "To ensure configuration safety in production, I used `pydantic-settings`. 
+# It merges default values, `.env` file values, and system environment variables. 
+# This makes it trivial to inject Render/Docker environment variables without 
+# altering the code, conforming to the 12-Factor App methodology."
+# ─────────────────────────────────────────────
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -98,6 +120,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     # CORS
     # ------------------------------------------------------------------ #
+    # SCALABILITY NOTE:
+    # In production, CORS_ORIGINS should strictly contain the exact frontend
+    # domain. The trailing slash must not be included.
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,https://codesense-frontend-j63d.onrender.com"
 
     @property
@@ -123,9 +148,24 @@ class Settings(BaseSettings):
 
     def ensure_dirs(self) -> None:
         """Create required runtime directories if they do not exist."""
+        # SIDE EFFECTS:
+        # Modifies the local filesystem to ensure directory structures
+        # for vector indices, uploads, and logs exist before they are written to.
         for directory in [self.UPLOAD_DIR, self.VECTOR_STORE_DIR, self.LOG_FILE.parent]:
             Path(directory).mkdir(parents=True, exist_ok=True)
 
+
+# ─────────────────────────────────────────────
+# LINES 130-136
+# PURPOSE:
+# Singleton accessor for the Settings object.
+#
+# WHY IT EXISTS:
+# Reading environment variables and instantiating Pydantic models incurs a
+# slight performance penalty. The `@lru_cache(maxsize=1)` decorator ensures 
+# that `Settings()` is only computed once globally. Subsequent calls to 
+# `get_settings()` return the exact same memory instance instantly.
+# ─────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

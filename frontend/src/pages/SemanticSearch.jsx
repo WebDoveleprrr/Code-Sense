@@ -8,27 +8,27 @@ import CodeBlock from "../components/ui/CodeBlock";
 
 export default function SemanticSearch() {
   const [searchParams] = useSearchParams();
-  const [repoId, setRepoId] = useState(searchParams.get("repo") || "");
-  const [query, setQuery] = useState("");
+  const [repoId, setRepoId] = useState(searchParams.get("repo") || ""); //stores selected repo
+  const [query, setQuery] = useState(""); //stores question asked
   const inputRef = useRef(null);
 
   const { results, loading, error, meta, search, clear } = useSearch();
   const { repo } = useRepository(repoId);
-  const isRepoReady = repo ? repo.status === "ready" : false;
-
+  const isRepoReady = repo ? repo.status === "ready" : false; //only search if indexing finished
+  //auto focus
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
-
+  //main search function
   const handleSearch = () => {
-    if (!query.trim() || !repoId || !isRepoReady) return;
+    if (!query.trim() || !repoId || !isRepoReady) return; //only search if all these done
     search({
       repo_id: repoId,
       query: query.trim(),
       top_k: 5
     });
   };
-
+  //expample questions
   const suggestions = [
     "Where is authentication implemented?",
     "How does repository ingestion work?",

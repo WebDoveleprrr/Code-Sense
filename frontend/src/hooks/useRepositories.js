@@ -2,12 +2,12 @@ import { useState, useEffect, useCallback } from "react";
 import { repositoriesApi } from "../services/api";
 
 const NON_FINAL_STATUSES = ["queued", "cloning", "parsing", "chunking", "embedding", "indexing", "processing"];
-
+//manage all repos
 export function useRepositories() {
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
+  //get repos from backend
   const fetchRepos = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     setError(null);
@@ -33,13 +33,13 @@ export function useRepositories() {
     const interval = setInterval(() => {
       fetchRepos(true);
     }, 10000);
-
+    // stop timer after leaving dashboard
     return () => clearInterval(interval);
   }, [repos, fetchRepos]);
-
+  //dashboard does the following
   return { repos, loading, error, refetch: () => fetchRepos() };
 }
-
+//manage one specific repo
 export function useRepository(repoId) {
   const [repo, setRepo] = useState(null);
   const [loading, setLoading] = useState(true);

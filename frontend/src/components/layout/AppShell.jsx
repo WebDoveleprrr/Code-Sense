@@ -1,3 +1,5 @@
+//common layout for all pages
+//everything inside this becomes children
 import React, { useState, useContext } from "react";
 import Sidebar from "./Sidebar";
 import { useNavigate } from "react-router-dom";
@@ -6,7 +8,7 @@ import { AuthContext } from "../../context/AuthContext";
 
 export default function AppShell({ children }) {
   const navigate = useNavigate();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); //handles dropdown for profile icon
   const { user, logout } = useContext(AuthContext);
 
   const handleLogout = () => {

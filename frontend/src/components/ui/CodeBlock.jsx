@@ -1,6 +1,9 @@
 // src/components/ui/CodeBlock.jsx
+
+// purpose: Take code as input,Display it beautifully,Provide syntax highlighting,Provide copy button
+
 import React, { useState } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"; //this is lib used similar to extension in vs code for coloring and styling
 import { Copy, Check } from "lucide-react";
 
 const customTheme = {
@@ -40,12 +43,12 @@ export default function CodeBlock({
   showCopy = true,
   startLine = 1,
   maxHeight = "400px",
-  compact = false,
+  compact = false, //used when samll preview is needed
 }) {
   const [copied, setCopied] = useState(false);
-
+  //runs when user clicks copy
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(code); //copies code to clipboard
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

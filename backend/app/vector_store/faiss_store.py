@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -44,11 +45,40 @@ IVF_THRESHOLD = 10_000
 IVF_NLIST = 100
 
 
-# ---------------------------------------------------------------------------
-# FAISSStore
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+# LINES 48-313
+# PURPOSE:
+# A stateful wrapper around Facebook AI Similarity Search (FAISS). It manages
+# the lifecycle of vector indices (initialization, batch insertion, serialization
+# to disk, in-memory caching, and similarity searching).
+#
+# WHY IT EXISTS:
+# Raw FAISS is low-level C++ bindings. This class abstracts away the complexity
+# of managing dimensions, metrics (Cosine vs L2), atomic disk writes, and
+# Python memory management. By wrapping FAISS, the rest of CodeSense can treat
+# vector similarity like a simple database query.
+#
+# ARCHITECTURE NOTE:
+# This acts as the Storage Layer for embeddings. It is called during ingestion
+# (pipeline.py) to save data, and during retrieval (qa_service.py) to search data.
+# Note that FAISS only returns integer IDs. The `MetadataStore` or `MongoDB`
+# must be used to map those integers back to actual code strings.
+# ─────────────────────────────────────────────
 
-_index_cache: Dict[str, Tuple[faiss.Index, Dict]] = {}
+# Global LRU cache for indices to prevent memory leaks. Max capacity = 3.
+_index_cache: OrderedDict[str, Tuple[faiss.Index, Dict]] = OrderedDict()
+MAX_CACHE_SIZE = 3
+
+def _manage_cache(repo_id: str, index: faiss.Index, meta: Dict) -> None:
+    """Add to LRU cache and evict oldest if necessary."""
+    global _index_cache
+    if repo_id in _index_cache:
+        _index_cache.move_to_end(repo_id)
+    _index_cache[repo_id] = (index, meta)
+    
+    if len(_index_cache) > MAX_CACHE_SIZE:
+        evicted_id, _ = _index_cache.popitem(last=False)
+        logger.info(f"FAISS cache full (>{MAX_CACHE_SIZE}). Evicted index for repo: {evicted_id}")
 
 
 class FAISSStore:
@@ -71,6 +101,17 @@ class FAISSStore:
     # ------------------------------------------------------------------ #
     # Build
     # ------------------------------------------------------------------ #
+
+    # ─────────────────────────────────────────────
+    # INTERVIEW QUESTION:
+    # "Why do you use IndexFlatIP instead of IndexFlatL2?"
+    #
+    # GOOD ANSWER:
+    # "For semantic search, we care about the angle between vectors (Cosine 
+    # Similarity), not the absolute distance. If vectors are strictly L2-normalized 
+    # before insertion, the Inner Product (IP) mathematically equals Cosine Similarity, 
+    # and FAISS executes IP much faster than calculating exact L2 distances."
+    # ─────────────────────────────────────────────
 
     def build(self, vectors: np.ndarray, model_name: str = "") -> None:
         """
@@ -134,6 +175,15 @@ class FAISSStore:
     # Persist
     # ------------------------------------------------------------------ #
 
+    # ─────────────────────────────────────────────
+    # SCALABILITY NOTE:
+    # Storing `.faiss` files locally on disk works perfectly for monolithic 
+    # deployments or single-container apps like Render. However, if this app
+    # horizontally scales to multiple workers (Kubernetes), local disks become 
+    # ephemeral and disjointed. At that scale, we would need to migrate to 
+    # Pinecone, Qdrant, or MongoDB Atlas Vector Search.
+    # ─────────────────────────────────────────────
+
     def save(self) -> None:
         """Atomically write the FAISS index + metadata sidecar to disk."""
         if self._index is None:
@@ -149,8 +199,8 @@ class FAISSStore:
 
         meta_path.write_text(json.dumps(self._meta, indent=2))
         
-        # Cache globally
-        _index_cache[self.repo_id] = (self._index, self._meta)
+        # Cache globally with LRU management
+        _manage_cache(self.repo_id, self._index, self._meta)
         
         logger.info(
             "[{id}] FAISS index saved → {path}  ({n} vectors).",
@@ -162,7 +212,12 @@ class FAISSStore:
     def load(self) -> None:
         """Load the FAISS index (and metadata sidecar) from disk or memory cache."""
         global _index_cache
+        
+        # MEMORY MANAGEMENT NOTE:
+        # Memory caching prevents the 500ms disk I/O penalty on every search request.
+        # We use an OrderedDict LRU cache to evict old repositories, preventing OOM.
         if self.repo_id in _index_cache:
+            _index_cache.move_to_end(self.repo_id)
             self._index, self._meta = _index_cache[self.repo_id]
             logger.info("[{id}] FAISS index loaded from memory cache.", id=self.repo_id)
             return
@@ -180,8 +235,7 @@ class FAISSStore:
 
         if meta_path.exists():
             self._meta = json.loads(meta_path.read_text())
-
-        _index_cache[self.repo_id] = (self._index, self._meta)
+        _manage_cache(self.repo_id, self._index, self._meta)
 
         logger.info(
             "[{id}] FAISS index loaded — {n} vectors.",

@@ -115,12 +115,19 @@ class MetadataStore:
     # ------------------------------------------------------------------ #
 
     def save(self) -> None:
-        """Write metadata to disk."""
-        self._meta_path.write_text(
-            json.dumps(self._records, indent=2, ensure_ascii=False)
-        )
+        """Write metadata to disk using a streaming approach to prevent OOM."""
+        with open(self._meta_path, "w", encoding="utf-8") as f:
+            f.write("[\n")
+            for i, record in enumerate(self._records):
+                json.dump(record, f, ensure_ascii=False)
+                if i < len(self._records) - 1:
+                    f.write(",\n")
+                else:
+                    f.write("\n")
+            f.write("]")
+            
         logger.info(
-            "[{id}] chunk_meta.json saved ({n} records).",
+            "[{id}] chunk_meta.json saved ({n} records) via stream.",
             id=self.repo_id,
             n=len(self._records),
         )
@@ -135,7 +142,8 @@ class MetadataStore:
             )
             self._records = []
         else:
-            self._records = json.loads(self._meta_path.read_text())
+            with open(self._meta_path, "r", encoding="utf-8") as f:
+                self._records = json.load(f)
         self._loaded = True
         logger.info(
             "[{id}] chunk_meta.json loaded ({n} records).",

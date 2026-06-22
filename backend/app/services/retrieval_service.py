@@ -352,6 +352,18 @@ async def _get_ready_repo(repo_id: str) -> RepositoryDocument:
             f"Repository '{repo_id}' is not ready (status: {repo.status}). "
             "Wait for ingestion to complete."
         )
+        
+    store = FAISSStore(repo_id=repo_id, index_path=repo.faiss_index_path)
+    if not store.exists():
+        repo.status = RepoStatus.DEGRADED
+        repo.error_message = "FAISS index missing. Data may have been lost during server restart."
+        await repo.save()
+        logger.error("[{id}] Marked repo DEGRADED. FAISS index missing at {p}", id=repo_id, p=repo.faiss_index_path)
+        raise SearchError(
+            f"Repository '{repo_id}' data was lost during server restart. "
+            "Please re-ingest the repository."
+        )
+        
     return repo
 
 

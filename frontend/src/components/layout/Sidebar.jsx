@@ -1,3 +1,4 @@
+//provides navigation to each page needed
 import React, { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
@@ -5,6 +6,7 @@ import {
   Building2, Shuffle, ShieldAlert, Settings, ChevronLeft, ChevronRight, Zap as LogoIcon
 } from "lucide-react";
 
+//store evrything in one array
 const NAV_GROUPS = [
   {
     title: "Repositories",
@@ -39,11 +41,11 @@ const NAV_GROUPS = [
 ];
 
 export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
-  const location = useLocation();
+  const [collapsed, setCollapsed] = useState(false); //sidebar expanded or collapsed
+  const location = useLocation(); //gets current URL
 
   return (
-    <aside
+    <aside //aside --- html tag for side panel
       className={`relative flex flex-col transition-all duration-300 ease-in-out border-r border-slate-800 bg-slate-950 ${
         collapsed ? "w-16" : "w-64"
       }`}

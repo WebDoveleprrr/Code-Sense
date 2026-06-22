@@ -28,6 +28,7 @@ class RepoStatus(str, Enum):
     INDEXING = "indexing"
     READY = "ready"
     FAILED = "failed"
+    DEGRADED = "degraded"
 
 
 class RepositoryDocument(Document):

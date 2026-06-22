@@ -22,14 +22,14 @@ const SUPPORTED_LANGUAGES = ["Python", "Java", "C++", "JavaScript", "TypeScript"
 export default function UploadPage() {
   const navigate = useNavigate();
   const { mutate } = useRepositories();
-  const [url, setUrl] = useState("");
-  const [file, setFile] = useState(null);
+  const [url, setUrl] = useState(""); //github link
+  const [file, setFile] = useState(null); //zip file
   const [loading, setLoading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
+  const [dragOver, setDragOver] = useState(false); //drag and drop file
   const [ingestState, setIngestState] = useState(null); // 'cloning', 'parsing', 'chunking', 'embedding', 'indexing', 'ready'
-  const [indexedRepo, setIndexedRepo] = useState(null);
+  const [indexedRepo, setIndexedRepo] = useState(null); //repo returned from backend
   const inputRef = useRef(null);
-
+  //runs when a file being dragged
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     setDragOver(false);
@@ -41,7 +41,7 @@ export default function UploadPage() {
       toast.error("Only .zip files are accepted");
     }
   }, []);
-
+  //runs when click file to browse
   const handleFile = (e) => {
     const f = e.target.files[0];
     if (f?.name.endsWith(".zip")) {
@@ -62,7 +62,7 @@ export default function UploadPage() {
       }
     }
   };
-
+  //runs when start analysis cicked
   const handleSubmit = async () => {
     if (!file && !url.trim()) {
       return toast.error("Please provide a GitHub URL or a ZIP file.");
@@ -95,7 +95,7 @@ export default function UploadPage() {
       setLoading(false);
     }
   };
-
+  //if success show summary else go to upload
   if (indexedRepo && ingestState === 'ready') {
     return <RepositorySummary repo={indexedRepo} navigate={navigate} />;
   }
@@ -212,11 +212,11 @@ export default function UploadPage() {
 
 function IngestionProgress({ state }) {
   const steps = [
-    { id: 'cloning', label: 'Repository Cloned' },
-    { id: 'parsing', label: 'Files Parsed' },
-    { id: 'chunking', label: 'Code Chunked' },
-    { id: 'embedding', label: 'Generating Embeddings' },
-    { id: 'indexing', label: 'Building Search Index' }
+    { id: 'cloning', label: 'Repository Cloned' }, //github_loader.py
+    { id: 'parsing', label: 'Files Parsed' }, //repo_parser.py
+    { id: 'chunking', label: 'Code Chunked' }, //chunker.py
+    { id: 'embedding', label: 'Generating Embeddings' }, //embedding_piepline.py
+    { id: 'indexing', label: 'Building Search Index' }  //faiss.store.py
   ];
 
   const currentIndex = steps.findIndex(s => s.id === state);
@@ -255,7 +255,7 @@ function IngestionProgress({ state }) {
     </div>
   );
 }
-
+//shown after ingestion success
 function RepositorySummary({ repo, navigate }) {
   return (
     <div className="p-8 max-w-3xl mx-auto mt-10">

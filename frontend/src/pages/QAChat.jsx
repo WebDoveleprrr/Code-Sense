@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react"; //useref stores ref or address to a DOM element, useeffect runs when a component loads or state changes
 import { useSearchParams } from "react-router-dom";
 import { Send, Loader2, Bot, User, FileCode2, Info, ArrowRight } from "lucide-react";
 import { qaApi } from "../services/api";
@@ -13,17 +13,17 @@ export default function QAChat() {
   const [repoId, setRepoId] = useState(searchParams.get("repo") || "");
   const { repo } = useRepository(repoId);
   
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sources, setSources] = useState([]);
-  const [selectedSource, setSelectedSource] = useState(null);
+  const [messages, setMessages] = useState([]); //store chat history
+  const [input, setInput] = useState(""); //question asked
+  const [loading, setLoading] = useState(false); //shows spinner
+  const [sources, setSources] = useState([]); //stores retirved chunks
+  const [selectedSource, setSelectedSource] = useState(null); //tracks which source file user clicked
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-
+  //indexing finieshed or not
   const isRepoReady = repo ? repo.status === "ready" : false;
-
+  //auto scroll when new message arrives
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -35,35 +35,35 @@ export default function QAChat() {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
-
+  //main function called when press enter or click send
   const handleAsk = async (text) => {
-    const query = text || input;
+    const query = text || input; //dfault uestion or asked question
     if (!query.trim() || !repoId || !isRepoReady) return;
 
-    const userMsg = { role: "user", content: query.trim() };
-    setMessages((prev) => [...prev, userMsg]);
+    const userMsg = { role: "user", content: query.trim() }; //create user message
+    setMessages((prev) => [...prev, userMsg]); //append to chat
     setInput("");
     setLoading(true);
-
+    //ask AI
     try {
       const res = await qaApi.ask({
         repo_id: repoId,
         question: query.trim(),
         history: messages.map(m => ({ role: m.role, content: m.content }))
       });
-      
+      //store answer from AI
       setMessages((prev) => [...prev, { role: "assistant", content: res.answer }]);
       if (res.sources && res.sources.length > 0) {
-        setSources(res.sources);
+        setSources(res.sources); //store sources(retrived chunks)
       }
-    } catch (err) {
+    } catch (err) { //error handling
       toast.error(err.message || "Failed to answer question");
       setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, I encountered an error while processing your request." }]);
     } finally {
       setLoading(false);
     }
   };
-
+  //starter or example prompts
   const suggestions = [
     "Explain the architecture",
     "Show authentication flow",
@@ -188,7 +188,7 @@ export default function QAChat() {
         </div>
       </div>
 
-      {/* Right Sidebar - Sources Panel */}
+      {/* Right Sidebar - Sources Panel */} // creates buttons for source files in the right panel
       <div className="w-80 bg-slate-950 flex flex-col shrink-0 hidden lg:flex">
         <div className="h-16 px-4 border-b border-slate-800 flex items-center shrink-0">
           <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
@@ -229,7 +229,7 @@ export default function QAChat() {
             </>
           )}
 
-          {/* Source Preview */}
+          {/* Source Preview */} //if a source file is clicked then show the code inside it
           {selectedSource !== null && sources[selectedSource] && (
             <div className="mt-6 border-t border-slate-800 pt-6 animate-fade-in">
               <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Code Preview</h4>

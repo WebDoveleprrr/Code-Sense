@@ -250,6 +250,42 @@ async def list_repo_chunks(
 # Routes — deletion
 # ------------------------------------------------------------------ #
 
+@router.get(
+    "/{repo_id}/health",
+    summary="Check repository health (missing index, metadata, corruption)",
+)
+async def check_repo_health(
+    repo_id: str,
+    current_user: UserDocument = Depends(get_current_user),
+):
+    doc = await RepositoryDocument.get(repo_id)
+    if doc is None or doc.user_id != str(current_user.id):
+        raise NotFoundError(f"Repository '{repo_id}' not found.")
+        
+    health_status = {
+        "status": doc.status.value,
+        "is_healthy": True,
+        "issues": []
+    }
+    
+    if doc.status == RepoStatus.READY:
+        from app.vector_store.faiss_store import FAISSStore
+        from app.vector_store.metadata_store import MetadataStore
+        
+        # Check FAISS index
+        store = FAISSStore(repo_id=repo_id, index_path=doc.faiss_index_path)
+        if not store.exists():
+            health_status["is_healthy"] = False
+            health_status["issues"].append("FAISS index file missing from disk.")
+            
+        # Check MetadataStore
+        meta_store = MetadataStore(repo_id=repo_id, index_path=doc.faiss_index_path)
+        if not meta_store.exists():
+            health_status["issues"].append("Metadata sidecar (chunk_meta.json) missing from disk.")
+            
+    return health_status
+
+
 @router.delete(
     "/{repo_id}",
     status_code=status.HTTP_200_OK,

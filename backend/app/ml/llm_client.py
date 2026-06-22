@@ -38,6 +38,22 @@ def get_provider() -> str:
     return os.getenv("LLM_PROVIDER", get_settings().LLM_PROVIDER).lower()
 
 
+# ─────────────────────────────────────────────
+# LINES 41-173
+# PURPOSE:
+# Standardized async wrappers for multiple LLM APIs.
+#
+# WHY IT EXISTS:
+# By wrapping the specific nuances of Ollama (REST), OpenAI (SDK), Anthropic (SDK),
+# and Gemini (SDK) into identical `(system, user) -> str` signatures, the rest of 
+# CodeSense never has to care which provider is actively responding.
+#
+# ARCHITECTURE NOTE:
+# This acts as an adapter layer (Adapter Pattern). It isolates third-party vendor
+# lock-in. If we decide to add Cohere tomorrow, we simply add a `_call_cohere`
+# function here and register it in the chain below.
+# ─────────────────────────────────────────────
+
 async def _call_ollama(system: str, user: str) -> str:
     settings = get_settings()
     base_url = os.getenv("OLLAMA_BASE_URL", settings.OLLAMA_BASE_URL).rstrip("/")
@@ -173,11 +189,35 @@ async def _call_gemini(system: str, user: str) -> str:
     return text
 
 
+# ─────────────────────────────────────────────
+# LINES 176-224
+# PURPOSE:
+# The global entry point for all LLM inference in the platform, featuring
+# an automated provider fallback chain.
+#
+# WHY IT EXISTS:
+# Relying on a single API provider in a production environment is dangerous.
+# If OpenAI goes down, or Ollama OOMs the Render container, the entire RAG pipeline
+# breaks. This function catches connection/quota errors and transparently fails over.
+#
+# INTERVIEW QUESTION:
+# "How does CodeSense guarantee uptime during LLM outages?"
+#
+# GOOD ANSWER:
+# "I built a resilient Chain-of-Responsibility fallback mechanism. If Gemini fails 
+# due to rate limits, it silently catches the exception and attempts OpenAI. If 
+# OpenAI fails, it tries Anthropic, then local Ollama, and finally falls back to
+# a static mock response. The user always gets an answer without seeing a 500 server error."
+# ─────────────────────────────────────────────
+
 async def complete(
     system_prompt: str,
     user_prompt: str,
     provider: Optional[str] = None,
 ) -> str:
+    # FUNCTION PURPOSE:
+    # Safely route prompts to the best available LLM with cascading fallbacks.
+    
     settings = get_settings()
     enable_llm = os.getenv("ENABLE_LLM", str(settings.ENABLE_LLM)).lower() == "true"
     if not enable_llm:
@@ -205,6 +245,7 @@ async def complete(
             elif current_provider == "ollama":
                 return await _call_ollama(system_prompt, user_prompt)
             elif current_provider == "local":
+                # Graceful degradation at the very end of the chain
                 return f"Extractive Preview: LLM capabilities are currently degraded (Fallback mode active). Cannot generate deep insights."
         except (RuntimeError, ImportError, LLMUnavailableError) as exc:
             last_error = exc
@@ -231,6 +272,10 @@ def normalize_model_name(name: str) -> str:
 
 async def validate_startup() -> None:
     """Validate that at least one LLM provider is available."""
+    # FUNCTION PURPOSE:
+    # Runs during the FastAPI startup lifecycle (`main.py`) to verify API keys
+    # or ping the local Ollama instance. If nothing is available, it warns the user
+    # immediately rather than waiting for them to type a RAG query.
     settings = get_settings()
     enable_llm = os.getenv("ENABLE_LLM", str(settings.ENABLE_LLM)).lower() == "true"
     if not enable_llm:

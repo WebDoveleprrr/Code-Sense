@@ -32,9 +32,29 @@ from app.ml.prompt_templates import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Repository Q&A (RAG)
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+# LINES 39-77
+# PURPOSE:
+# The core generative function for answering user questions based on retrieved code.
+#
+# WHY IT EXISTS:
+# Retrieving code is only half the battle. We must package that code into a
+# structured prompt and ask an LLM to synthesize an answer. This function acts
+# as the final layer of the Retrieval-Augmented Generation (RAG) pipeline.
+#
+# ARCHITECTURE NOTE:
+# This file intentionally separates *Prompt Construction* (`prompt_templates.py`) 
+# and *Network Execution* (`llm_client.py`) from the RAG orchestration logic.
+#
+# USED BY:
+# `qa_service.py`
+#
+# INTERVIEW NOTE:
+# "In my RAG implementation, I strictly decouple retrieval from generation. 
+# `generate_answer` receives the context as a raw string; it doesn't care if that 
+# string came from FAISS, MongoDB, or a mock test. This makes the LLM layer 100% 
+# unit-testable without needing a live vector database."
+# ─────────────────────────────────────────────
 
 async def generate_answer(
     question: str,
@@ -53,7 +73,22 @@ async def generate_answer(
     Returns:
         Markdown-formatted answer string.
     """
+    # FLOW:
+    # qa_service
+    #   ↓ (searches FAISS)
+    # context string
+    #   ↓
+    # generate_answer()
+    #   ↓ (build_qa_prompt)
+    # complete()
+    #   ↓
+    # Gemini / OpenAI API
+    #   ↓
+    # Markdown Answer
+
     if not context.strip():
+        # Guard clause: Hallucination prevention.
+        # If the vector search found nothing, do NOT let the LLM guess the answer.
         return (
             "No relevant code context was found for this question.\n\n"
             "_Try rephrasing your query or ensure the repository has been indexed._"
@@ -76,9 +111,17 @@ async def generate_answer(
     return answer
 
 
-# ---------------------------------------------------------------------------
-# Code / function explanation
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+# LINES 83-130
+# PURPOSE:
+# Generates inline explanations for specific code snippets (e.g., when a user
+# highlights code in the frontend).
+#
+# WHY IT EXISTS:
+# Often users don't want to search the entire codebase; they just want to understand
+# a specific function they are looking at. This skips the vector retrieval phase
+# and performs a direct zero-shot explanation.
+# ─────────────────────────────────────────────
 
 async def generate_explanation(
     code_snippet: str,
@@ -129,9 +172,17 @@ async def generate_explanation(
     return explanation
 
 
-# ---------------------------------------------------------------------------
-# Architecture summariser (RAG-enhanced)
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+# LINES 136-183
+# PURPOSE:
+# Generates a high-level architectural overview of a repository.
+#
+# WHY IT EXISTS:
+# Gives users a "birds-eye view" of a codebase immediately after ingestion.
+# Instead of searching vectors, this prompt relies heavily on the structural
+# metadata (total files, language breakdown, entry points) extracted by
+# the AST parser during ingestion.
+# ─────────────────────────────────────────────
 
 async def generate_architecture_summary(
     repo_name: str,
@@ -191,4 +242,8 @@ def build_rag_context(chunks: List[Dict[str, Any]], max_chars: int = 6_000) -> s
     Convert ranked retrieval results into a prompt-ready context string.
     Thin wrapper over prompt_templates.format_retrieved_context.
     """
+    # SCALABILITY NOTE:
+    # max_chars acts as a safety valve. If the retriever accidentally pulls
+    # massive files, this truncation ensures we never exceed the LLM's context limit,
+    # preventing HTTP 400 Payload Too Large errors from the provider.
     return format_retrieved_context(chunks, max_chars=max_chars)

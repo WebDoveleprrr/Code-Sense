@@ -1,5 +1,5 @@
-import React, { useState, useContext } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useContext } from "react"; //usecontext used for accessing gloablly stored authcontext
+import { useNavigate } from "react-router-dom"; //go to needed page
 import toast from "react-hot-toast";
 import { GoogleLogin } from "@react-oauth/google";
 import { AuthContext } from "../context/AuthContext";
@@ -9,11 +9,11 @@ export default function Login() {
   const { login } = useContext(AuthContext);
   const [loading, setLoading] = useState(false);
   const [mockEmail, setMockEmail] = useState("developer@codesense.ai");
-  const isDev = import.meta.env.DEV === true;
+  const isDev = import.meta.env.DEV === true; //if running locally then show bypass email else dont
 
   const handleMockLogin = async (e) => {
     e.preventDefault(); //prevent refresh on form submit
-    setLoading(true); //shhow loading spinner
+    setLoading(true); //show loading spinner
     try {
       // In development/testing, prefix with mock_token_ to trigger bypass on backend
       const token = `mock_token_${mockEmail.split("@")[0]}`;
@@ -22,11 +22,10 @@ export default function Login() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: token }),
       });
-      const data = await response.json();
+      const data = await response.json(); //this makes frontend wait until json is fully recived and then store in data
       if (response.ok) {
-        login(data.access_token, data.refresh_token, data.user);
+        login(data.access_token, data.refresh_token, data.user); //retreiving data from authcontext
         toast.success(`Welcome back, ${data.user.name}!`);
-        // Navigate to dashboard
         navigate("/dashboard");
       } else {
         toast.error(data.detail || "Authentication failed");
@@ -45,8 +44,8 @@ export default function Login() {
       const response = await fetch(`${import.meta.env?.VITE_API_URL || "http://localhost:8000/api/v1"}/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: credentialResponse.credential }),
-      });
+        body: JSON.stringify({ id_token: credentialResponse.credential }), //google token which is sent from frontend and verified at backend
+      });                                                                  //if valid , creates JWT and return tokens
       const data = await response.json();
       if (response.ok) {
         login(data.access_token, data.refresh_token, data.user);
@@ -63,6 +62,20 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+// JWT (JSON Web Token) acts like a movie ticket.
+//
+// Analogy:
+// User           = Movie customer
+// Backend        = Booking counter
+// JWT Token      = Movie ticket
+//
+// After successful Google login:
+// 1. User proves identity using Google.
+// 2. Backend verifies the Google token.
+// 3. Backend generates JWT tokens.
+// 4. Backend returns them to frontend.
+// 5. Frontend stores them in localStorage.
 
   return (
     <div className="relative flex items-center justify-center min-h-screen overflow-hidden bg-slate-950 font-sans">
