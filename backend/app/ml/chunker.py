@@ -184,27 +184,63 @@ def _semantic_chunks(
         if not content.strip():
             continue
 
-        chunks.append(
-            _make_chunk(
-                file_path=file_path,
-                language=language,
-                content=content,
-                start_line=start,
-                end_line=end,
-                chunk_index=chunk_index,
-                chunk_type=kind,
-                symbol_name=name,
-                metadata={
-                    "args": meta.get("args") or meta.get("params"),
-                    "decorators": meta.get("decorators"),
-                    "docstring": meta.get("docstring"),
-                    "bases": meta.get("bases"),
-                    "is_async": meta.get("is_async"),
-                },
+        MAX_LINES_PER_SYMBOL = 200
+        MAX_CHARS_PER_CHUNK = 2000
+
+        if len(chunk_lines) > MAX_LINES_PER_SYMBOL or len(content) > MAX_CHARS_PER_CHUNK:
+            sub_chunk_size = 100
+            sub_overlap = 20
+            sub_idx = 0
+            while sub_idx < len(chunk_lines):
+                sub_end = min(sub_idx + sub_chunk_size, len(chunk_lines))
+                sub_content = "\n".join(chunk_lines[sub_idx:sub_end])
+                if len(sub_content) > MAX_CHARS_PER_CHUNK:
+                    sub_content = sub_content[:MAX_CHARS_PER_CHUNK]
+                
+                chunks.append(
+                    _make_chunk(
+                        file_path=file_path,
+                        language=language,
+                        content=sub_content,
+                        start_line=start + sub_idx,
+                        end_line=start + sub_end - 1,
+                        chunk_index=chunk_index,
+                        chunk_type=kind,
+                        symbol_name=name,
+                        metadata={
+                            "args": meta.get("args") or meta.get("params"),
+                            "decorators": meta.get("decorators"),
+                            "docstring": meta.get("docstring"),
+                            "bases": meta.get("bases"),
+                            "is_async": meta.get("is_async"),
+                        },
+                    )
+                )
+                sub_idx += max(1, sub_chunk_size - sub_overlap)
+                chunk_index += 1
+        else:
+            chunks.append(
+                _make_chunk(
+                    file_path=file_path,
+                    language=language,
+                    content=content,
+                    start_line=start,
+                    end_line=end,
+                    chunk_index=chunk_index,
+                    chunk_type=kind,
+                    symbol_name=name,
+                    metadata={
+                        "args": meta.get("args") or meta.get("params"),
+                        "decorators": meta.get("decorators"),
+                        "docstring": meta.get("docstring"),
+                        "bases": meta.get("bases"),
+                        "is_async": meta.get("is_async"),
+                    },
+                )
             )
-        )
+            chunk_index += 1
+
         covered_lines.update(range(start, end + 1))
-        chunk_index += 1
 
     # Emit uncovered lines as window chunks
     uncovered = [i for i in range(1, len(lines) + 1) if i not in covered_lines]

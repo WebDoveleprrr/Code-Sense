@@ -117,7 +117,7 @@ SKIP_EXTENSIONS = {
 }
 
 # Maximum single-file size (bytes)
-MAX_FILE_SIZE_BYTES: int = 512 * 1024  # 512 KB
+MAX_FILE_SIZE_BYTES: int = 1024 * 1024  # 1 MB
 
 
 # ------------------------------------------------------------------ #
@@ -130,12 +130,10 @@ async def parse_repository(repo_dir: Path) -> List[Dict]:
     {
         "file_path":  str,   # relative to repo_dir
         "language":   str,
-        "content":    str,
-        "line_count": int,
         "size_bytes": int,
-        "content_hash": str, # sha256 hex
     }
     Runs the blocking filesystem walk in a thread executor.
+    Does NOT load file contents.
     """
     loop = asyncio.get_event_loop()
     results = await loop.run_in_executor(None, _walk_sync, repo_dir)
@@ -145,6 +143,33 @@ async def parse_repository(repo_dir: Path) -> List[Dict]:
         dir=str(repo_dir),
     )
     return results
+
+def read_and_decode_file(path: Path) -> Optional[str]:
+    """
+    Lazily reads file content, detects binary files, skips invalid files,
+    and returns decoded text. Returns None if the file is binary or unreadable.
+    """
+    try:
+        size_bytes = path.stat().st_size
+        if size_bytes > MAX_FILE_SIZE_BYTES or size_bytes == 0:
+            return None
+        
+        raw = path.read_bytes()
+    except OSError:
+        return None
+
+    # Binary sniff (null bytes in first 8KB → skip)
+    if b"\x00" in raw[:8192]:
+        return None
+
+    enc_result = chardet.detect(raw[:4096])
+    encoding = enc_result.get("encoding") or "utf-8"
+    try:
+        content = raw.decode(encoding, errors="replace")
+    except (LookupError, ValueError):
+        content = raw.decode("utf-8", errors="replace")
+
+    return content
 
 
 # ------------------------------------------------------------------ #
@@ -186,34 +211,11 @@ def _walk_sync(repo_dir: Path) -> List[Dict]:
         if size_bytes == 0:
             continue
 
-        # --- Read & decode ---
-        try:
-            raw = path.read_bytes()
-        except OSError:
-            continue
-
-        # Binary sniff (null bytes in first 8KB → skip)
-        if b"\x00" in raw[:8192]:
-            continue
-
-        enc_result = chardet.detect(raw[:4096])
-        encoding = enc_result.get("encoding") or "utf-8"
-        try:
-            content = raw.decode(encoding, errors="replace")
-        except (LookupError, ValueError):
-            content = raw.decode("utf-8", errors="replace")
-
-        # Content hash for dedup
-        content_hash = hashlib.sha256(raw).hexdigest()
-
         results.append(
             {
                 "file_path": str(path.relative_to(repo_dir)),
                 "language": language,
-                "content": content,
-                "line_count": content.count("\n") + 1,
                 "size_bytes": size_bytes,
-                "content_hash": content_hash,
             }
         )
 
