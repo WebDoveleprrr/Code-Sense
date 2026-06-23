@@ -18,6 +18,10 @@ from typing import List, Optional
 import numpy as np
 from app_logger import logger
 from sentence_transformers import SentenceTransformer
+import torch
+
+torch.set_num_threads(1)
+torch.set_grad_enabled(False)
 
 from app.core.config import get_settings
 
@@ -93,6 +97,7 @@ class Embedder:
         )
         return vec.astype(np.float32)
 
+    @torch.inference_mode()
     def embed_batch(
         self,
         texts: List[str],

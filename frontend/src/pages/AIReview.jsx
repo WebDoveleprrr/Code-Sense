@@ -1,10 +1,12 @@
+//AI Review automatically evaluates the repository for:Code Quality,Security,Maintainability,Performance
+//it generates issues, scores, and recommendations
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ShieldAlert, Loader2, Star, ShieldCheck, Activity, Settings, AlertOctagon, AlertTriangle, Info, CheckSquare } from "lucide-react";
 import { reviewApi } from "../services/api";
 import { useRepository } from "../hooks/useRepositories";
 import RepoSelector from "../components/ui/RepoSelector";
-import toast from "react-hot-toast";
+import toast from "react-hot-toast"; //popups
 
 export default function AIReview() {
   const [searchParams] = useSearchParams();
@@ -167,6 +169,7 @@ export default function AIReview() {
   );
 }
 
+//Reusable card --- Used for: Quality,Security,Maintainability,Performance
 function Scorecard({ title, score, icon: Icon, color, bg, border }) {
   return (
     <div className={`p-6 rounded-3xl border bg-slate-900 ${border} shadow-glass relative overflow-hidden group hover:border-${color.split('-')[1]}-500/50 transition-colors`}>
@@ -181,6 +184,7 @@ function Scorecard({ title, score, icon: Icon, color, bg, border }) {
   );
 }
 
+//eusable severity block --- Used for: High,Medium,Low
 function IssueGroup({ title, issues, icon: Icon, color }) {
   if (issues.length === 0) return null;
   return (

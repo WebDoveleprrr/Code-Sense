@@ -7,7 +7,7 @@ import { timeAgo } from "../utils/helpers";
 import toast from "react-hot-toast";
 
 export default function Dashboard() {
-  const { repos, loading, mutate } = useRepositories();
+  const { repos, loading, refetch } = useRepositories();
   const [health, setHealth] = useState(null);
   const navigate = useNavigate();
 
@@ -24,7 +24,7 @@ export default function Dashboard() {
         toast.loading("Provisioning Demo Repository (FastAPI)...", { id: "demo-toast" });
         await repositoriesApi.ingestGitHub("https://github.com/tiangolo/fastapi", "master");
         toast.success("Demo repository ingestion started!", { id: "demo-toast" });
-        mutate();
+        refetch();
       } catch (err) {
         toast.error("Failed to provision demo repository.", { id: "demo-toast" });
       }

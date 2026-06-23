@@ -980,3 +980,868 @@ useQA
 ```
 
 ---
+Semantic Search tells you:
+Where code exists
+
+QA tells you:
+Ask questions about repository
+
+ExplainCode tells you:
+What this code does
+
+# CodeSense Frontend Notes — Day 4 (June 23)
+
+---
+
+# FILE 1: LandingPage.jsx
+
+## Purpose
+
+Public marketing page shown before login.
+
+Acts as:
+
+```text
+Website Homepage
+        ↓
+Show Product
+        ↓
+Explain Features
+        ↓
+Push User To Login
+```
+
+---
+
+## Overall Flow
+
+```text
+User Opens Website
+        ↓
+LandingPage.jsx Loads
+        ↓
+Check AuthContext
+        ↓
+Is User Logged In?
+      /     \
+    Yes      No
+     ↓        ↓
+Dashboard   Landing Page
+```
+
+Code:
+
+```js
+const { authenticated } = useContext(AuthContext);
+
+if(authenticated){
+   return <Navigate to="/dashboard"/>
+}
+```
+
+---
+
+## Feature Cards Flow
+
+```text
+FeatureCard
+      ↓
+Receives Icon
+Receives Title
+Receives Description
+      ↓
+Renders Marketing Card
+```
+
+Example:
+
+```js
+<FeatureCard
+   icon={Search}
+   title="Semantic Search"
+   desc="Search your codebase"
+/>
+```
+
+---
+
+## How It Works Flow
+
+```text
+Upload Repository
+        ↓
+CodeSense Parses
+        ↓
+Chunks Created
+        ↓
+Embeddings Generated
+        ↓
+AI Features Enabled
+```
+
+---
+
+## Interview Questions
+
+### Why check authentication inside LandingPage?
+
+Answer:
+
+```text
+To prevent logged-in users from seeing the marketing page again.
+
+Authenticated users are redirected directly to Dashboard.
+```
+
+---
+
+### Difference between Navigate and Route?
+
+Answer:
+
+```text
+Route:
+Defines path-to-component mapping.
+
+Navigate:
+Programmatically redirects user.
+
+Route = Road
+Navigate = Vehicle
+```
+
+---
+
+### Why use AuthContext here?
+
+Answer:
+
+```text
+LandingPage needs global login state.
+
+AuthContext provides authentication information
+without prop drilling.
+```
+
+---
+
+# FILE 2: DependencyGraph.jsx
+
+---
+
+## Purpose
+
+Visualizes repository dependency relationships.
+
+Real system:
+
+```text
+File A imports File B
+File B imports File C
+
+Graph:
+A → B → C
+```
+
+Current version:
+
+```text
+Mostly Mock UI
+```
+
+---
+
+## Overall Flow
+
+```text
+User Selects Repo
+        ↓
+useRepository(repoId)
+        ↓
+Check Status
+        ↓
+Ready?
+      /   \
+    No     Yes
+    ↓       ↓
+Wait     loadGraph()
+```
+
+---
+
+## Graph Loading Flow
+
+```text
+loadGraph()
+      ↓
+dependencyApi.buildGraph()
+      ↓
+Backend Generates Graph
+      ↓
+Nodes + Edges Returned
+      ↓
+Frontend Draws Graph
+```
+
+Current code uses mocked metrics.
+
+---
+
+## Zoom Flow
+
+```text
+Zoom In Click
+      ↓
+setZoom(z+0.2)
+
+Zoom Out Click
+      ↓
+setZoom(z-0.2)
+```
+
+---
+
+## Pan Flow
+
+```text
+Mouse Down
+      ↓
+Start Drag
+      ↓
+Mouse Move
+      ↓
+Update Pan Coordinates
+      ↓
+Graph Moves
+```
+
+---
+
+## Interview Questions
+
+### Why use zoom state?
+
+Answer:
+
+```text
+To dynamically scale graph rendering.
+```
+
+---
+
+### Why use pan state?
+
+Answer:
+
+```text
+To move graph viewport without modifying graph data.
+```
+
+---
+
+### Why Dependency Graph?
+
+Answer:
+
+```text
+Helps developers understand relationships
+between modules and imports.
+```
+
+---
+
+# FILE 3: ExplainCode.jsx
+
+---
+
+## Purpose
+
+Explains code snippets using LLM.
+
+---
+
+## Overall Flow
+
+```text
+Paste Code
+      ↓
+Click Explain
+      ↓
+explainApi.explain()
+      ↓
+Backend LLM
+      ↓
+Explanation Returned
+      ↓
+UI Displays Result
+```
+
+---
+
+## Explain Flow
+
+```text
+Code Input
+      ↓
+handleExplain()
+      ↓
+Validate Input
+      ↓
+API Call
+      ↓
+Response
+      ↓
+setExplanation()
+```
+
+---
+
+## Why Paste Code?
+
+Two modes exist:
+
+### Semantic Search Mode
+
+```text
+Select Repo
+      ↓
+Find Existing Code
+      ↓
+Explain Returned Chunk
+```
+
+### Explain Code Mode
+
+```text
+Paste Any Snippet
+      ↓
+Get Explanation
+```
+
+No repository search required.
+
+---
+
+## Tabs Flow
+
+```text
+Summary
+Detailed
+Complexity
+```
+
+```text
+Button Click
+      ↓
+setActiveTab()
+      ↓
+Conditional Rendering
+```
+
+---
+
+## Interview Questions
+
+### Why separate tabs?
+
+Answer:
+
+```text
+Improves readability and prevents
+information overload.
+```
+
+---
+
+### Why use textarea?
+
+Answer:
+
+```text
+Allows arbitrary code snippets
+instead of selecting existing files.
+```
+
+---
+
+### What does Explain Code do?
+
+Answer:
+
+```text
+Sends code snippet to backend LLM service.
+
+The LLM analyses purpose,
+logic,
+dependencies,
+complexity,
+and improvements.
+```
+
+---
+
+# FILE 4: ImpactAnalysis.jsx
+
+---
+
+## Purpose
+
+Determines blast radius of code changes.
+
+---
+
+## Real World Example
+
+```text
+Modify auth.py
+      ↓
+Which files break?
+      ↓
+Which services depend on it?
+      ↓
+Which APIs are affected?
+```
+
+---
+
+## Overall Flow
+
+```text
+Select Repository
+        ↓
+Select File
+        ↓
+Analyze
+        ↓
+Backend Dependency Engine
+        ↓
+Affected Files Returned
+```
+
+---
+
+## Blast Radius Flow
+
+```text
+Target File
+      ↓
+Direct Imports
+      ↓
+Indirect Imports
+      ↓
+Services
+      ↓
+External Consumers
+```
+
+---
+
+## Visual Flow
+
+```text
+auth.py
+   ↓
+users.py
+auth_service.py
+   ↓
+frontend
+microservice
+```
+
+---
+
+## Interview Questions
+
+### What is Blast Radius?
+
+Answer:
+
+```text
+The set of components affected by
+a modification in a target file.
+```
+
+---
+
+### Why is Impact Analysis useful?
+
+Answer:
+
+```text
+Reduces deployment risk.
+
+Developers know what might break
+before changing code.
+```
+
+---
+
+# FILE 5: Architecture.jsx
+
+---
+
+## Purpose
+
+Generates high-level repository architecture.
+
+---
+
+## Overall Flow
+
+```text
+Select Repository
+      ↓
+architectureApi.summarise()
+      ↓
+Backend Analysis
+      ↓
+Architecture Summary
+      ↓
+Frontend Renders Report
+```
+
+---
+
+## Architecture Generation Flow
+
+```text
+Repository
+      ↓
+AST Analysis
+      ↓
+Dependency Analysis
+      ↓
+Pattern Detection
+      ↓
+Architecture Summary
+```
+
+---
+
+## Diagram Flow
+
+```text
+Frontend
+     ↓
+API Layer
+     ↓
+Services
+   /     \
+MongoDB  FAISS
+```
+
+---
+
+## Architecture Sections
+
+```text
+Overview
+
+Entry Points
+
+Key Modules
+
+Design Patterns
+
+Dependencies
+
+Recommendations
+```
+
+---
+
+## Interview Questions
+
+### Why Architecture Analysis?
+
+Answer:
+
+```text
+Helps engineers understand
+large repositories quickly.
+```
+
+---
+
+### What are Entry Points?
+
+Answer:
+
+```text
+Starting execution locations.
+
+Examples:
+
+main.py
+app.py
+index.js
+server.js
+```
+
+---
+
+### What are Key Modules?
+
+Answer:
+
+```text
+Most important business logic components.
+```
+
+---
+
+# FILE 6: AIReview.jsx
+
+---
+
+## Purpose
+
+AI-powered code review system.
+
+---
+
+## Expected Flow
+
+```text
+Repository
+      ↓
+Analyze Code
+      ↓
+Security Review
+      ↓
+Performance Review
+      ↓
+Maintainability Review
+      ↓
+Final Score
+```
+
+---
+
+## Review Pipeline
+
+```text
+Repository
+      ↓
+Parser
+      ↓
+Static Analysis
+      ↓
+LLM Review
+      ↓
+Recommendations
+```
+
+---
+
+## Expected Metrics
+
+```text
+Code Quality
+
+Security
+
+Performance
+
+Maintainability
+
+Overall Score
+```
+
+---
+
+## Interview Questions
+
+### Why AI Review?
+
+Answer:
+
+```text
+Automates initial code review.
+
+Helps developers detect issues earlier.
+```
+
+---
+
+### Difference between AI Review and Explain Code?
+
+Answer:
+
+```text
+Explain Code:
+Explains existing code.
+
+AI Review:
+Evaluates code quality and suggests improvements.
+```
+
+---
+
+# Cross-File Architecture Questions
+
+---
+
+## Landing Page → Login Flow
+
+```text
+LandingPage
+      ↓
+Login
+      ↓
+Google OAuth
+      ↓
+Backend
+      ↓
+JWT
+      ↓
+Dashboard
+```
+
+---
+
+## Dashboard → Search Flow
+
+```text
+Dashboard
+      ↓
+Search Button
+      ↓
+SemanticSearch
+      ↓
+Search API
+      ↓
+Backend Retrieval
+      ↓
+Results
+```
+
+---
+
+## Dashboard → QA Flow
+
+```text
+Dashboard
+      ↓
+QA Page
+      ↓
+Question
+      ↓
+Backend
+      ↓
+RAG
+      ↓
+Answer
+```
+
+---
+
+## Repository Analysis Flow
+
+```text
+Upload Repo
+      ↓
+Pipeline
+      ↓
+Chunking
+      ↓
+Embeddings
+      ↓
+FAISS
+      ↓
+Mongo
+      ↓
+Ready
+```
+
+---
+
+# High Probability Interview Questions
+
+### Explain entire frontend architecture.
+
+```text
+main.jsx
+   ↓
+App.jsx
+   ↓
+BrowserRouter
+   ↓
+ProtectedRoute
+   ↓
+AppShell
+   ↓
+Pages
+   ↓
+Hooks
+   ↓
+API Layer
+   ↓
+Backend
+```
+
+---
+
+### Why use Hooks?
+
+```text
+Reusable stateful logic.
+
+Avoid duplicate code.
+```
+
+---
+
+### Why use Context?
+
+```text
+Global shared state.
+
+Authentication available everywhere.
+```
+
+---
+
+### Why use Custom Hooks?
+
+```text
+Separate business logic
+from UI components.
+```
+
+---
+
+### Why use ProtectedRoute?
+
+```text
+Prevents unauthorized users
+from accessing internal pages.
+```
+
+---
+
+### What is the complete CodeSense user journey?
+
+```text
+Login
+  ↓
+Dashboard
+  ↓
+Upload Repository
+  ↓
+Backend Pipeline
+  ↓
+Index Ready
+  ↓
+Search
+  ↓
+QA
+  ↓
+Explain
+  ↓
+Architecture
+  ↓
+Impact Analysis
+  ↓
+AI Review
+```

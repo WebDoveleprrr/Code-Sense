@@ -1,31 +1,31 @@
 import React, { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom"; //Read URL for github repo
 import { Zap, Loader2, FileCode2, Play, GitMerge, AlertTriangle, ArrowRight, Layers } from "lucide-react";
-import { explainApi } from "../services/api";
+import { explainApi } from "../services/api"; //bridge to backend
 import { useRepository } from "../hooks/useRepositories";
-import RepoSelector from "../components/ui/RepoSelector";
-import CodeBlock from "../components/ui/CodeBlock";
+import RepoSelector from "../components/ui/RepoSelector"; //choose repository context
 import toast from "react-hot-toast";
 
 export default function ExplainCode() {
   const [searchParams] = useSearchParams();
   const [repoId, setRepoId] = useState(searchParams.get("repo") || "");
-  const { repo } = useRepository(repoId);
+  const { repo } = useRepository(repoId); //get repository status
   
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(""); //Stores pasted code
   const [loading, setLoading] = useState(false);
-  const [explanation, setExplanation] = useState(null);
+  const [explanation, setExplanation] = useState(null); //Stores AI result(initially null)
   const [activeTab, setActiveTab] = useState("summary"); // summary, detailed, complexity
   
-  const isRepoReady = repo ? repo.status === "ready" : false;
+  const isRepoReady = repo ? repo.status === "ready" : false; //Prevent explanation before indexing
 
+  //main function(send code to backend and receive explanation)
   const handleExplain = async () => {
-    if (!code.trim() || !repoId || !isRepoReady) return;
+    if (!code.trim() || !repoId || !isRepoReady) return; //Prevent invalid requests.
     
     setLoading(true);
-    setExplanation(null);
+    setExplanation(null); //clear old explanation
     
-    try {
+    try { //actual backend call
       const res = await explainApi.explain({
         repo_id: repoId,
         code: code.trim(),
@@ -43,7 +43,7 @@ export default function ExplainCode() {
         improvements: "Consider caching results to improve performance."
       };
       
-      setExplanation(parsedExplanation);
+      setExplanation(parsedExplanation); //save explanation
     } catch (err) {
       toast.error(err.message || "Failed to explain code");
     } finally {
@@ -61,7 +61,7 @@ export default function ExplainCode() {
           <p className="text-sm text-slate-400 mb-6">Paste any snippet from your repository to get an AI-powered breakdown of its purpose and logic.</p>
           
           <label className="block text-sm font-medium text-slate-400 mb-2">Repository Context</label>
-          <RepoSelector value={repoId} onChange={setRepoId} />
+          <RepoSelector value={repoId} onChange={setRepoId} filterStatus={null} />
         </div>
         
         <div className="flex-1 p-6 flex flex-col relative">
@@ -179,6 +179,7 @@ export default function ExplainCode() {
   );
 }
 
+//Reusable component
 function InfoCard({ icon: Icon, title, content, className = "" }) {
   return (
     <div className={`p-5 rounded-2xl bg-slate-950 border border-slate-800 shadow-glass ${className}`}>

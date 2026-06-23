@@ -116,7 +116,9 @@ class MetadataStore:
 
     def save(self) -> None:
         """Write metadata to disk using a streaming approach to prevent OOM."""
-        with open(self._meta_path, "w", encoding="utf-8") as f:
+        import os
+        tmp_path = self._meta_path.with_suffix(".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write("[\n")
             for i, record in enumerate(self._records):
                 json.dump(record, f, ensure_ascii=False)
@@ -125,6 +127,7 @@ class MetadataStore:
                 else:
                     f.write("\n")
             f.write("]")
+        os.replace(tmp_path, self._meta_path)
             
         logger.info(
             "[{id}] chunk_meta.json saved ({n} records) via stream.",

@@ -49,14 +49,14 @@ export default function App() {
           },
         }}
       />
-      <Routes> //similar to switch() case: in cpp
+      <Routes> {/* similar to switch() case: in cpp */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
         <Route
           path="/*"
           element={
-            <ProtectedRoute> //route only given to authoried users
-              <AppShell> //structure in common for all pages(sidebar,layout,etc)
+            <ProtectedRoute> {/* route only given to authoried users */}
+              <AppShell> {/* structure in common for all pages(sidebar,layout,etc) */}
                 <Routes>
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/upload" element={<UploadPage />} />

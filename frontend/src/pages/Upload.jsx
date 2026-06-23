@@ -21,7 +21,7 @@ const SUPPORTED_LANGUAGES = ["Python", "Java", "C++", "JavaScript", "TypeScript"
 
 export default function UploadPage() {
   const navigate = useNavigate();
-  const { mutate } = useRepositories();
+  const { refetch } = useRepositories();
   const [url, setUrl] = useState(""); //github link
   const [file, setFile] = useState(null); //zip file
   const [loading, setLoading] = useState(false);
@@ -85,7 +85,7 @@ export default function UploadPage() {
       // Simulate the UI steps for the recruiter demo feel
       await simulateProgress();
       
-      mutate();
+      refetch();
       setIndexedRepo(res);
       toast.success("Repository successfully indexed!");
     } catch (err) {

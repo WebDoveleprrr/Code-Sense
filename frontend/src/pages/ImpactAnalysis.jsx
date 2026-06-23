@@ -1,8 +1,12 @@
+//If I modify a file,what else can break in the repo
+//auth/middleware.py imported by auth.py imported by users.py used by Frontend API
+//Now if you change: auth/middleware.py you might accidentally break: auth.py,users.py,frontend login
+//This chain reaction is called: Blast Radius
 import React, { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom"; //get url
 import { Shuffle, Loader2, FileCode2, ArrowRight, Server, Globe, FileStack } from "lucide-react";
 import { useRepository } from "../hooks/useRepositories";
-import RepoSelector from "../components/ui/RepoSelector";
+import RepoSelector from "../components/ui/RepoSelector"; //Choose repository
 
 export default function ImpactAnalysis() {
   const [searchParams] = useSearchParams();
@@ -10,9 +14,9 @@ export default function ImpactAnalysis() {
   const { repo } = useRepository(repoId);
   
   const [loading, setLoading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState("auth/middleware.py");
+  const [selectedFile, setSelectedFile] = useState("auth/middleware.py"); //Target file for analysis
   const isRepoReady = repo ? repo.status === "ready" : false;
-
+  //mock implementation
   const handleAnalyze = () => {
     setLoading(true);
     setTimeout(() => setLoading(false), 1500); // Mock analysis time

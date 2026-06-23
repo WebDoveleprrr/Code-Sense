@@ -3,11 +3,12 @@ import { Link, Navigate } from 'react-router-dom';
 import { Search, Building2, Zap, LayoutDashboard, Database, ArrowRight, ShieldAlert, GitBranch } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
 
+//Main public page component
 export default function LandingPage() {
   const { authenticated } = useContext(AuthContext);
 
   if (authenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/dashboard" replace />; //go without reloading
   }
 
   return (

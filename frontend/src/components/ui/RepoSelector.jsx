@@ -42,7 +42,7 @@ export default function RepoSelector({ value, onChange, filterStatus = "ready" }
           className={`ml-auto text-frost-dim transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
-        //dropdown list
+      {/* dropdown list */}
       {open && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-ink-800 border border-ink-600 rounded-xl shadow-glass z-50 overflow-hidden max-h-64 overflow-y-auto">
           {filtered.length === 0 ? (

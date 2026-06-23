@@ -188,7 +188,7 @@ export default function QAChat() {
         </div>
       </div>
 
-      {/* Right Sidebar - Sources Panel */} // creates buttons for source files in the right panel
+      {/* Right Sidebar - Sources Panel - creates buttons for source files in the right panel */}
       <div className="w-80 bg-slate-950 flex flex-col shrink-0 hidden lg:flex">
         <div className="h-16 px-4 border-b border-slate-800 flex items-center shrink-0">
           <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
@@ -229,7 +229,7 @@ export default function QAChat() {
             </>
           )}
 
-          {/* Source Preview */} //if a source file is clicked then show the code inside it
+          {/* Source Preview - if a source file is clicked then show the code inside it */}
           {selectedSource !== null && sources[selectedSource] && (
             <div className="mt-6 border-t border-slate-800 pt-6 animate-fade-in">
               <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Code Preview</h4>

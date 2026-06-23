@@ -105,7 +105,7 @@ def register_middleware(app: FastAPI) -> None:
 
     # 2. Trusted-host guard (production only)
     if settings.is_production:
-        app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=[".onrender.com", "localhost"])
 
     # 1. CORS — must be outermost
     app.add_middleware(

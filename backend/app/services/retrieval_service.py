@@ -31,8 +31,10 @@ from app.models.repository import RepositoryDocument, RepoStatus
 from app.vector_store.faiss_store import FAISSStore
 from app.vector_store.metadata_store import MetadataStore
 
+from collections import OrderedDict
 # Global cache: repo_id -> (updated_at_timestamp, BM25Okapi, list of ChunkDocument)
-_bm25_cache: Dict[str, tuple] = {}
+_bm25_cache: OrderedDict[str, tuple] = OrderedDict()
+MAX_CACHE_SIZE = 3
 
 # ---------------------------------------------------------------------------
 # Result schema
@@ -133,6 +135,7 @@ class RetrievalService:
         cached_val = _bm25_cache.get(repo_id)
         if cached_val and cached_val[0] == repo.updated_at:
             bm25, all_chunks = cached_val[1], cached_val[2]
+            _bm25_cache.move_to_end(repo_id)
         else:
             all_chunks = await ChunkDocument.find(ChunkDocument.repo_id == repo_id).to_list()
             tokenized_corpus = [c.content.lower().split() for c in all_chunks]
@@ -140,6 +143,10 @@ class RetrievalService:
                 from rank_bm25 import BM25Okapi
                 bm25 = BM25Okapi(tokenized_corpus)
                 _bm25_cache[repo_id] = (repo.updated_at, bm25, all_chunks)
+                _bm25_cache.move_to_end(repo_id)
+                if len(_bm25_cache) > MAX_CACHE_SIZE:
+                    evicted_id, _ = _bm25_cache.popitem(last=False)
+                    logger.info(f"BM25 cache full (>{MAX_CACHE_SIZE}). Evicted cache for repo: {evicted_id}")
             else:
                 bm25 = None
 

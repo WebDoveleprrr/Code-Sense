@@ -1,3 +1,4 @@
+//How is this entire repository designed
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Building2, Loader2, Server, Layout, Database, Layers, ArrowRightLeft, Cpu } from "lucide-react";
@@ -19,7 +20,7 @@ export default function Architecture() {
     if (repoId && isRepoReady) {
       loadArchitecture();
     } else {
-      setArchitecture(null);
+      setArchitecture(null); //initial explanation is null
     }
   }, [repoId, isRepoReady]);
 
@@ -31,12 +32,12 @@ export default function Architecture() {
       const res = await architectureApi.summarise(repoId);
       
       setArchitecture({
-        systemOverview: "The repository represents a multi-tier web application designed to handle large-scale data ingestion and semantic search. It utilizes a microservices-inspired architecture with clear separation of concerns between frontend, API layer, and backend services.",
-        frontend: "React-based single-page application (SPA) built with Vite and TailwindCSS. It communicates with the backend via REST APIs and handles complex state management for features like semantic search and repository exploration.",
-        backend: "Python-based API server (likely FastAPI or similar) that provides endpoints for ingestion, search, and Q&A. It orchestrates background tasks for parsing and chunking source code.",
-        database: "Relational database (PostgreSQL/MySQL) for storing repository metadata, user information, and job statuses. MongoDB might be used for document storage.",
-        vectorStore: "FAISS or similar vector database used to store and query sentence-transformer embeddings of code chunks for rapid semantic retrieval.",
-        requestFlow: "User -> React Frontend -> REST API -> Backend Service -> Vector Store / LLM Provider -> Response"
+        summary: res.summary || "No summary available.",
+        entryPoints: res.entry_points?.length ? res.entry_points.join(", ") : "None detected.",
+        keyModules: res.key_modules?.length ? res.key_modules.join(", ") : "None detected.",
+        patterns: res.patterns?.length ? res.patterns.join(", ") : "None detected.",
+        dependencies: res.external_deps?.length ? res.external_deps.join(", ") : "None detected.",
+        recommendations: res.recommendations?.length ? res.recommendations.join("\n") : "No recommendations."
       });
     } catch (err) {
       toast.error(err.message || "Failed to load architecture");
@@ -101,12 +102,12 @@ export default function Architecture() {
 
           {/* Sections */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <SectionCard title="System Overview" icon={Building2} content={architecture.systemOverview} fullWidth />
-            <SectionCard title="Frontend Structure" icon={Layout} content={architecture.frontend} />
-            <SectionCard title="Backend Services" icon={Server} content={architecture.backend} />
-            <SectionCard title="Database Design" icon={Database} content={architecture.database} />
-            <SectionCard title="Vector Store" icon={Layers} content={architecture.vectorStore} />
-            <SectionCard title="Request Flow" icon={ArrowRightLeft} content={architecture.requestFlow} fullWidth />
+            <SectionCard title="System Overview" icon={Building2} content={architecture.summary} fullWidth />
+            <SectionCard title="Entry Points" icon={Layout} content={architecture.entryPoints} /> {/*The first file executed when an application starts*/}
+            <SectionCard title="Key Modules" icon={Server} content={architecture.keyModules} /> {/*Core business components*/}
+            <SectionCard title="Design Patterns" icon={Database} content={architecture.patterns} /> {/*Patterns reveal how the system is structured and help developers understand architecture quickly.*/}
+            <SectionCard title="Dependencies" icon={Layers} content={architecture.dependencies} />
+            <SectionCard title="Recommendations" icon={ArrowRightLeft} content={architecture.recommendations} fullWidth /> {/*AI-generated improvements*/}
           </div>
           
         </div>
@@ -115,6 +116,7 @@ export default function Architecture() {
   );
 }
 
+//reusable component for Frontend Box JSX,API Box JSX,Service Box JSX,Mongo Box JSX
 function DiagramNode({ icon: Icon, label, color, bg, border }) {
   return (
     <div className={`w-32 h-32 rounded-2xl flex flex-col items-center justify-center border-2 ${bg} ${border} shadow-lg relative z-10`}>
@@ -124,6 +126,7 @@ function DiagramNode({ icon: Icon, label, color, bg, border }) {
   );
 }
 
+//Show system flow
 function DiagramArrow() {
   return (
     <div className="flex flex-col items-center px-2 py-4 md:py-0 md:px-4">
@@ -133,6 +136,7 @@ function DiagramArrow() {
   );
 }
 
+//reusable component for the above 6 sections
 function SectionCard({ title, icon: Icon, content, fullWidth = false }) {
   return (
     <div className={`p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-glass ${fullWidth ? 'lg:col-span-2' : ''}`}>

@@ -167,10 +167,13 @@ class QAService:
         except Exception as exc:
             from app.ml.llm_client import LLMUnavailableError
             if isinstance(exc, LLMUnavailableError):
-                raise
-            logger.warning("[QA] LLM failure, falling back to extractive mode: {err}", err=str(exc))
-            answer_text = _fallback_qa(question, ranked_chunks)
-            is_fallback = True
+                logger.warning(f"[QA] LLM Provider Unavailable: {str(exc)}")
+                answer_text = f"**Note: The LLM provider is currently unavailable ({str(exc)}).**\n\n" + _fallback_qa(question, ranked_chunks)
+                is_fallback = True
+            else:
+                logger.warning("[QA] LLM failure, falling back to extractive mode: {err}", err=str(exc))
+                answer_text = _fallback_qa(question, ranked_chunks)
+                is_fallback = True
 
         elapsed_ms = (time.perf_counter() - t0) * 1_000
 

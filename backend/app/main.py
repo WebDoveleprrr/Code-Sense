@@ -84,8 +84,8 @@ def create_app() -> FastAPI:
             "CodeSense — AI-powered semantic repository intelligence platform. "
             "Upload GitHub repos or ZIPs, then search, query, and analyse codebases with AI."
         ),
-        docs_url="/docs", #creates: localhost:8000/docs --- Swagger UI
-        redoc_url="/redoc", # swagger UI is auto-generated API documentation provided by FastAPI that allows developers to view and test endpoints directly from the browser.
+        docs_url="/docs" if not settings.is_production else None, #creates: localhost:8000/docs --- Swagger UI
+        redoc_url="/redoc" if not settings.is_production else None, # swagger UI is auto-generated API documentation provided by FastAPI that allows developers to view and test endpoints directly from the browser.
         openapi_url="/openapi.json",
         lifespan=lifespan, #use startup/shutdown function defined above
     )

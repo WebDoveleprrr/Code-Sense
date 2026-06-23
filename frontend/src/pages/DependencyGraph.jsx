@@ -1,5 +1,6 @@
+//Visualize relationships between files/modules/classes
 import React, { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom"; //Read URL parameters.
 import { GitBranch, Loader2, ZoomIn, ZoomOut, Maximize, Search, Search as SearchIcon, Filter } from "lucide-react";
 import { dependencyApi } from "../services/api";
 import { useRepository } from "../hooks/useRepositories";
@@ -15,22 +16,33 @@ export default function DependencyGraph() {
   const { repo } = useRepository(repoId);
   
   const [loading, setLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(""); //Search graph nodes
   const isRepoReady = repo ? repo.status === "ready" : false;
 
   const [metrics, setMetrics] = useState({ modules: 0, dependencies: 0, circular: 0 });
 
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 }); //Move graph canvas
+  const [isDragging, setIsDragging] = useState(false); //Detect mouse drag
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const handleMouseDown = (e) => { setIsDragging(true); setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); }; //Mouse Press->Dragging = true->Store Initial Position
+  const handleMouseMove = (e) => { if (isDragging) setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); };  //Dragging?->Yes->Update Pan Coordinates
+  const handleMouseUp = () => setIsDragging(false); //Mouse Released->Dragging = false
+  
+  //Automatically load graph if repo is ready
   useEffect(() => {
     if (repoId && isRepoReady) {
       loadGraph();
     }
   }, [repoId, isRepoReady]);
 
-  const loadGraph = async () => {
+  //Fetch graph information
+  const loadGraph = async () => { //async used because graph generation takes time so frontend shi=ould freeze
     setLoading(true);
     try {
       // Mocked graph metrics load
-      const res = await dependencyApi.buildGraph(repoId).catch(() => ({}));
+      const res = await dependencyApi.buildGraph(repoId).catch(() => ({})); //bridge to backend
       setMetrics({
         modules: 124,
         dependencies: 342,
@@ -85,24 +97,31 @@ export default function DependencyGraph() {
       ) : (
         <div className="flex-1 relative flex overflow-hidden">
           {/* Main Graph Area (Mocked visually) */}
-          <div className="flex-1 relative bg-[#020617] overflow-hidden" style={{ backgroundImage: 'radial-gradient(#1e293b 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
+          <div 
+            className="flex-1 relative bg-[#020617] overflow-hidden cursor-move" 
+            style={{ backgroundImage: 'radial-gradient(#1e293b 1px, transparent 1px)', backgroundSize: '40px 40px' }}
+            onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
+          >
             
             {/* Graph Controls */}
-            <div className="absolute bottom-6 left-6 flex flex-col gap-2">
-              <button className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shadow-lg">
+            <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-20">
+              <button onClick={() => setZoom(z => Math.min(z + 0.2, 3))} className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shadow-lg">
                 <ZoomIn size={18} />
               </button>
-              <button className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shadow-lg">
+              <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.5))} className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shadow-lg">
                 <ZoomOut size={18} />
               </button>
-              <button className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shadow-lg mt-2">
+              <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shadow-lg mt-2">
                 <Maximize size={18} />
               </button>
             </div>
 
             {/* Mocked Graph Visual */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-50">
-              <div className="relative w-96 h-96">
+              <div 
+                className="relative w-96 h-96 transition-transform duration-75"
+                style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+              >
                 <div className="absolute top-1/2 left-1/2 w-32 h-0.5 bg-indigo-500/30 -rotate-45 origin-left" />
                 <div className="absolute top-1/2 left-1/2 w-48 h-0.5 bg-indigo-500/30 rotate-12 origin-left" />
                 <div className="absolute top-1/2 left-1/2 w-40 h-0.5 bg-indigo-500/30 rotate-90 origin-left" />
@@ -151,6 +170,7 @@ export default function DependencyGraph() {
   );
 }
 
+//Reusable statistics card
 function MetricCard({ label, value, valueColor = "text-slate-50" }) {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-glass">
