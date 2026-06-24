@@ -122,7 +122,7 @@ export function AuthProvider({ children }) {
   }, [restoreSession, logout]);
 
   return (
-    <AuthContext.Provider value={{ authenticated, refreshing, expired, user, login, restoreSession, logout }}> //everything stored globally
+    <AuthContext.Provider value={{ authenticated, refreshing, expired, user, login, restoreSession, logout }}> {/*everything stored globally*/}
       {refreshing && (
         <div className="fixed top-0 left-0 w-full z-50 bg-acid text-ink-950 py-1.5 px-4 text-center font-mono text-xs font-bold animate-slide-down shadow-md">
           Restoring session...

@@ -34,24 +34,15 @@ class ExplainService:
     async def explain(
         self,
         repo_id: str,
-        file_path: str,
-        start_line: int,
-        end_line: int,
+        file_path: Optional[str] = None,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None,
+        code: Optional[str] = None,
         *,
         provider: Optional[str] = None,
     ) -> dict:
         """
-        Explain a code range from a repository file.
-
-        Args:
-            repo_id:    Target repository ID.
-            file_path:  Relative path to the source file.
-            start_line: First line of the range (1-indexed).
-            end_line:   Last line of the range (1-indexed, inclusive).
-            provider:   LLM provider override.
-
-        Returns:
-            dict matching the ExplainResponse schema.
+        Explain a code range from a repository file or a raw code snippet.
         """
         t0 = time.perf_counter()
 
@@ -63,16 +54,19 @@ class ExplainService:
             raise NotFoundError(f"Repository '{repo_id}' not found.")
 
         # ---------------------------------------------------------------- #
-        # Read raw source lines
+        # Read raw source lines or use provided code
         # ---------------------------------------------------------------- #
-        from app.ml.code_reader import read_lines
-
-        code_snippet = await read_lines(
-            repo=repo,
-            file_path=file_path,
-            start_line=start_line,
-            end_line=end_line,
-        )
+        if code:
+            code_snippet = code
+            file_path = file_path or "snippet.txt"
+        else:
+            from app.ml.code_reader import read_lines
+            code_snippet = await read_lines(
+                repo=repo,
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
+            )
 
         # ---------------------------------------------------------------- #
         # Infer language from extension
@@ -83,47 +77,50 @@ class ExplainService:
         # ---------------------------------------------------------------- #
         # Infer symbol name from chunk metadata (optional enrichment)
         # ---------------------------------------------------------------- #
-        symbol_name = await _find_symbol_name(
-            repo_id=repo_id,
-            file_path=file_path,
-            start_line=start_line,
-            end_line=end_line,
-        )
+        symbol_name = None
+        if not code and file_path and start_line:
+            symbol_name = await _find_symbol_name(
+                repo_id=repo_id,
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
+            )
 
         # ---------------------------------------------------------------- #
         # Tree-Sitter AST context extraction
         # ---------------------------------------------------------------- #
-        full_content = ""
-        try:
-            from app.core.config import get_settings
-            settings = get_settings()
-            repo_dir = settings.UPLOAD_DIR / str(repo.id)
-            full_path = repo_dir / file_path
-            if full_path.exists():
-                full_content = full_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-
-        if not full_content:
-            full_content = code_snippet
-
-        from app.ml.parsers import parse_source
         parsed_metadata = {}
-        try:
-            parsed_metadata = parse_source({
-                "file_path": file_path,
-                "content": full_content,
-                "language": language
-            })
-        except Exception as exc:
-            logger.warning("Tree-sitter parse failed during explain context generation: {err}", err=str(exc))
+        if not code and file_path:
+            full_content = ""
+            try:
+                from app.core.config import get_settings
+                settings = get_settings()
+                repo_dir = settings.UPLOAD_DIR / str(repo.id)
+                full_path_obj = repo_dir / file_path
+                if full_path_obj.exists():
+                    full_content = full_path_obj.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+            if not full_content:
+                full_content = code_snippet
+
+            from app.ml.parsers import parse_source
+            try:
+                parsed_metadata = parse_source({
+                    "file_path": file_path,
+                    "content": full_content,
+                    "language": language
+                })
+            except Exception as exc:
+                logger.warning("Tree-sitter parse failed during explain context generation: {err}", err=str(exc))
 
         # ---------------------------------------------------------------- #
         # LLM-backed explanation
         # ---------------------------------------------------------------- #
         is_fallback = False
         try:
-            explanation = await generate_explanation(
+            explanation_str = await generate_explanation(
                 code_snippet=code_snippet,
                 language=language,
                 file_path=file_path,
@@ -131,6 +128,22 @@ class ExplainService:
                 metadata=parsed_metadata,
                 provider=provider,
             )
+            import json, re
+            clean_response = re.sub(r"^```json\s*", "", explanation_str, flags=re.IGNORECASE)
+            clean_response = re.sub(r"\s*```$", "", clean_response, flags=re.IGNORECASE).strip()
+            explanation = json.loads(clean_response)
+            
+            # Defensive Parsing
+            for key in ["inputs", "outputs", "dependencies", "improvements"]:
+                val = explanation.get(key)
+                if not isinstance(val, list):
+                    explanation[key] = []
+                    
+            comp = explanation.get("complexity")
+            if isinstance(comp, dict):
+                explanation["complexity"] = "\n".join(f"{k}: {v}" for k, v in comp.items())
+            elif not isinstance(comp, str):
+                explanation["complexity"] = str(comp or "")
         except Exception as exc:
             from app.ml.llm_client import LLMUnavailableError
             if isinstance(exc, LLMUnavailableError):
@@ -146,13 +159,14 @@ class ExplainService:
         # ---------------------------------------------------------------- #
         import asyncio
 
-        asyncio.create_task(
-            _write_explain_log(
-                repo_id=repo_id,
-                file_path=file_path,
-                latency_ms=elapsed_ms,
+        if not code and file_path:
+            asyncio.create_task(
+                _write_explain_log(
+                    repo_id=repo_id,
+                    file_path=file_path,
+                    latency_ms=elapsed_ms,
+                )
             )
-        )
 
         logger.info(
             "Explanation generated | repo={id} file={fp} lines={s}-{e} ({ms:.1f}ms)",
@@ -165,11 +179,8 @@ class ExplainService:
 
         return {
             "success": True,
-            "file_path": file_path,
-            "code_snippet": code_snippet,
             "explanation": explanation,
-            "latency_ms": round(elapsed_ms, 2),
-            "is_fallback": is_fallback,
+            "latency_ms": round(elapsed_ms, 2)
         }
 
     # ---------------------------------------------------------------------- #
@@ -243,7 +254,7 @@ def _ext_to_language(ext: str) -> str:
     return EXTENSION_MAP.get(ext.lstrip("."), ext or "text")
 
 
-def _fallback_explain(code_snippet: str, language: str, file_path: str, symbol_name: Optional[str]) -> str:
+def _fallback_explain(code_snippet: str, language: str, file_path: str, symbol_name: Optional[str]) -> dict:
     """Generate a heuristic explanation of the code snippet when LLM is unavailable."""
     lines = code_snippet.splitlines()
     num_lines = len(lines)
@@ -261,28 +272,26 @@ def _fallback_explain(code_snippet: str, language: str, file_path: str, symbol_n
         elif line_s.startswith("def ") or line_s.startswith("function "):
             functions.append(line_s)
             
-    summary = [
-        f"**Extractive Mode Analysis** for `{file_path}`",
-        "",
-        f"This snippet contains {num_lines} lines of {language} code.",
-    ]
-    if symbol_name:
-        summary.append(f"Target symbol: `{symbol_name}`.")
-        
-    summary.append("")
-    summary.append("### Identified Structures")
+    summary = f"**Extractive Mode Analysis** for `{file_path}`. This snippet contains {num_lines} lines of {language} code."
     
+    detailed = "Identified structures:\n"
     if imports:
-        summary.append(f"- **Imports:** Found {len(imports)} import statements.")
+        detailed += f"- **Imports:** Found {len(imports)} import statements.\n"
     if classes:
-        summary.append(f"- **Classes:** Found {len(classes)} class definition(s).")
+        detailed += f"- **Classes:** Found {len(classes)} class definition(s).\n"
     if functions:
-        summary.append(f"- **Functions:** Found {len(functions)} function definition(s).")
+        detailed += f"- **Functions:** Found {len(functions)} function definition(s).\n"
         
-    if not (imports or classes or functions):
-        summary.append("- No top-level functions, classes, or imports identified heuristically.")
-        
-    return "\n".join(summary)
+    return {
+        "summary": summary,
+        "detailed": detailed,
+        "complexity": "Unknown (Fallback Mode)",
+        "purpose": "Static structural extraction fallback.",
+        "inputs": [],
+        "outputs": [],
+        "dependencies": imports,
+        "improvements": ["Connect an LLM provider for deep analysis."]
+    }
 
 
 async def _find_symbol_name(

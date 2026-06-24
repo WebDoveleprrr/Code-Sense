@@ -30,20 +30,19 @@ export default function ExplainCode() {
         repo_id: repoId,
         code: code.trim(),
       });
-      // The backend probably returns text or JSON. If it's pure text, we mock the structured parts for UI demonstration.
-      // If the backend is returning JSON, we map it directly. Here we assume we parse or structure it.
-      const parsedExplanation = {
-        summary: res.explanation || "This code segment performs core logic for the application.",
-        detailed: res.detailed || "Detailed line-by-line breakdown of how the code operates within the system context.",
-        complexity: res.complexity || "Time Complexity: O(N)\nSpace Complexity: O(1)",
-        purpose: "To handle the specific logic required by the system.",
-        inputs: "Data parameters or configurations.",
-        outputs: "Processed data or side effects.",
-        dependencies: "Standard library or internal modules.",
-        improvements: "Consider caching results to improve performance."
-      };
+      const formatArray = (arr) => Array.isArray(arr) && arr.length > 0 ? arr.join(", ") : "None";
+      const data = res.explanation || {};
       
-      setExplanation(parsedExplanation); //save explanation
+      setExplanation({
+        summary: data.summary || "No summary available.",
+        detailed: data.detailed || "No detailed breakdown available.",
+        complexity: data.complexity || "Unknown complexity.",
+        purpose: data.purpose || "Not specified.",
+        inputs: formatArray(data.inputs),
+        outputs: formatArray(data.outputs),
+        dependencies: formatArray(data.dependencies),
+        improvements: formatArray(data.improvements)
+      });
     } catch (err) {
       toast.error(err.message || "Failed to explain code");
     } finally {
