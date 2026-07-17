@@ -22,7 +22,7 @@ from app_logger import logger
 from app.core.exceptions import NotFoundError
 from app.models.repository import RepositoryDocument, RepoStatus
 from app.models.search_log import QueryType, SearchLogDocument
-from app.ml.rag import generate_explanation
+from app.db.ml.rag import generate_explanation
 
 
 class ExplainService:
@@ -57,10 +57,23 @@ class ExplainService:
         # Read raw source lines or use provided code
         # ---------------------------------------------------------------- #
         if code:
-            code_snippet = code
+            code_snippet = code.strip()
             file_path = file_path or "snippet.txt"
+            
+            # Strict validation: reject plain English text but allow known declarative languages
+            import re
+            code_symbols = re.findall(r'[{}[\]();=+\-*/<>#@`]', code_snippet)
+            words = code_snippet.split()
+            is_declarative = any(kw in code_snippet.lower() for kw in ['select', 'insert', 'from', 'where', 'dockerfile', 'from ubuntu', 'run ', 'env ', 'yaml', 'json', 'xml'])
+            
+            if len(code_symbols) < 2 and len(words) > 3 and not is_declarative:
+                from fastapi import HTTPException
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Validation Error: Input does not appear to be valid source code. Please provide actual code."
+                )
         else:
-            from app.ml.code_reader import read_lines
+            from app.db.ml.code_reader import read_lines
             code_snippet = await read_lines(
                 repo=repo,
                 file_path=file_path,
@@ -69,12 +82,30 @@ class ExplainService:
             )
 
         # ---------------------------------------------------------------- #
-        # Infer language from extension
+        # Infer language from extension and content heuristics
         # ---------------------------------------------------------------- #
-        ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else "text"
-        language = _ext_to_language(ext)
-
-        # ---------------------------------------------------------------- #
+        ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+        language = _ext_to_language(ext) if ext else "unknown"
+        if language in ("text", "unknown", "txt"):
+            # Try to guess language using Pygments lexer based on content
+            try:
+                from pygments.lexers import guess_lexer
+                lexer = guess_lexer(code_snippet[:1000])
+                if lexer.name and lexer.name != "Text only":
+                    language = lexer.name.lower()
+            except Exception as e:
+                logger.warning(f"Failed to guess language with Pygments: {e}")
+                
+            # If still unknown, fall back to repo metadata if available
+            if language in ("text", "unknown") and repo and getattr(repo, 'repo_metadata', None):
+                breakdown = repo.repo_metadata.get('language_breakdown', {})
+                if isinstance(breakdown, dict) and breakdown:
+                    # Pick the dominant language
+                    dominant = max(breakdown.items(), key=lambda x: x[1])[0]
+                    language = dominant.lower()
+        
+        if language in ("text", "unknown"):
+            language = "text"
         # Infer symbol name from chunk metadata (optional enrichment)
         # ---------------------------------------------------------------- #
         symbol_name = None
@@ -105,7 +136,7 @@ class ExplainService:
             if not full_content:
                 full_content = code_snippet
 
-            from app.ml.parsers import parse_source
+            from app.db.ml.parsers import parse_source
             try:
                 parsed_metadata = parse_source({
                     "file_path": file_path,
@@ -114,6 +145,26 @@ class ExplainService:
                 })
             except Exception as exc:
                 logger.warning("Tree-sitter parse failed during explain context generation: {err}", err=str(exc))
+
+        # Cross-file repository context retrieval for caller/callee info
+        repo_context = ""
+        if symbol_name or (file_path and not code):
+            search_query = symbol_name if symbol_name else (file_path.split("/")[-1] if file_path else "")
+            if search_query:
+                from app.services.retrieval_service import RetrievalService
+                ret_svc = RetrievalService()
+                try:
+                    ret_result = await ret_svc.retrieve(repo_id=repo_id, query=f"calls to {search_query} or implementations of {search_query}", top_k=3)
+                    chunks = ret_result.get("results", [])
+                    if chunks:
+                        from app.db.ml.prompt_templates import format_retrieved_context
+                        repo_context = format_retrieved_context(chunks, max_chars=2000)
+                        if parsed_metadata:
+                            parsed_metadata["cross_file_context"] = repo_context
+                        else:
+                            parsed_metadata = {"cross_file_context": repo_context}
+                except Exception as e:
+                    logger.warning("Cross-file context retrieval failed: {e}", e=e)
 
         # ---------------------------------------------------------------- #
         # LLM-backed explanation
@@ -131,10 +182,40 @@ class ExplainService:
             import json, re
             clean_response = re.sub(r"^```json\s*", "", explanation_str, flags=re.IGNORECASE)
             clean_response = re.sub(r"\s*```$", "", clean_response, flags=re.IGNORECASE).strip()
-            explanation = json.loads(clean_response)
+            
+            try:
+                explanation = json.loads(clean_response)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse LLM JSON directly, attempting repair: {e}")
+                # Attempt basic repair: remove trailing commas, close unclosed braces
+                repaired = re.sub(r',\s*}', '}', clean_response)
+                repaired = re.sub(r',\s*]', ']', repaired)
+                
+                # Check for unclosed JSON object
+                open_braces = repaired.count('{')
+                close_braces = repaired.count('}')
+                if open_braces > close_braces:
+                    repaired += '}' * (open_braces - close_braces)
+                elif close_braces > open_braces:
+                    # Very rough, just strip the extra
+                    repaired = repaired[:repaired.rfind('}')+1]
+                    
+                open_brackets = repaired.count('[')
+                close_brackets = repaired.count(']')
+                if open_brackets > close_brackets:
+                    # Rough heuristic, assume it goes at the end but before the last brace
+                    if repaired.endswith('}'):
+                        repaired = repaired[:-1] + ']' * (open_brackets - close_brackets) + '}'
+                    else:
+                        repaired += ']' * (open_brackets - close_brackets)
+
+                try:
+                    explanation = json.loads(repaired)
+                except json.JSONDecodeError:
+                    raise Exception(f"JSON parsing failed even after repair. Raw output: {explanation_str}")
             
             # Defensive Parsing
-            for key in ["inputs", "outputs", "dependencies", "improvements"]:
+            for key in ["inputs", "outputs", "side_effects", "dependencies", "improvements"]:
                 val = explanation.get(key)
                 if not isinstance(val, list):
                     explanation[key] = []
@@ -145,7 +226,7 @@ class ExplainService:
             elif not isinstance(comp, str):
                 explanation["complexity"] = str(comp or "")
         except Exception as exc:
-            from app.ml.llm_client import LLMUnavailableError
+            from app.db.ml.llm_client import LLMUnavailableError
             if isinstance(exc, LLMUnavailableError):
                 raise
             logger.warning("LLM failure for explain, falling back: {err}", err=str(exc))
@@ -180,6 +261,7 @@ class ExplainService:
         return {
             "success": True,
             "explanation": explanation,
+            "language": language,
             "latency_ms": round(elapsed_ms, 2)
         }
 

@@ -20,8 +20,9 @@ class GitHubIngestRequest(BaseModel):
 
     github_url: str = Field(..., examples=["https://github.com/owner/repo"])
     branch: str = Field(default="main", examples=["main", "master", "develop"])
+    overwrite: bool = Field(default=False, description="Overwrite existing repository if it exists")
 
-    model_config = {"json_schema_extra": {"example": {"github_url": "https://github.com/owner/repo", "branch": "main"}}}
+    model_config = {"json_schema_extra": {"example": {"github_url": "https://github.com/owner/repo", "branch": "main", "overwrite": True}}}
 
 
 # ------------------------------------------------------------------ #

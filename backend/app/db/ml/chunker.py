@@ -1,16 +1,6 @@
 # backend/app/ml/chunker.py
 """
-CodeSense — Code Chunker (v2)
-Splits parsed file content into overlapping chunks with two strategies:
-
-  1. SEMANTIC chunking  — respects function/class boundaries extracted
-     by the language parsers (preferred for Python, JS/TS, C++).
-  2. LINE-WINDOW chunking — sliding window fallback for files where
-     no structural boundaries were detected (config files, SQL, etc.).
-
-Chunk dict schema
------------------
-{
+Chunk dict schema{
     "file_path":    str,
     "language":     str | None,
     "content":      str,
@@ -28,55 +18,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+# USED BY: pipeline.py --- DEPENDS ON: Output from repo_parser.py and metadata_generator.py
 
-# ─────────────────────────────────────────────
-# LINES 36-80
-# PURPOSE:
-# The primary entry point for converting raw source files into processable
-# vectors/chunks for the LLM. It routes each file to either semantic or
-# window-based chunking.
-#
-# WHY IT EXISTS:
-# LLMs have context limits (e.g., 8k/32k tokens), and Embedding models have
-# even stricter limits (e.g., 512 tokens). We cannot feed an entire repository
-# or even a massive file into an embedding model at once. We must break it down.
-#
-# ARCHITECTURE NOTE:
-# This sits exactly between the "Parser" phase (which extracts ASTs) and
-# the "Embedder" phase (which turns these text chunks into floats).
-#
-# USED BY:
-# `pipeline.py` (Step 5)
-#
-# DEPENDS ON:
-# Output from `repo_parser.py` and `metadata_generator.py`.
-#
-# INTERVIEW NOTE:
-# "When designing the RAG pipeline, I realized fixed-size chunking blindly cuts
-# functions in half, destroying their semantic meaning. I implemented a router here
-# that prefers 'Semantic Chunking' (using AST boundaries) but gracefully falls back
-# to sliding windows for non-code files like markdown or configs."
-# ─────────────────────────────────────────────
-
-def chunk_files(
-    parsed_files: List[Dict[str, Any]],
+def chunk_files( #public entry point
+    parsed_files: List[Dict[str, Any]], #Actual File Contents
     chunk_size: int = 512,
     overlap: int = 64,
-    parsed_meta: Optional[List[Dict[str, Any]]] = None,
+    parsed_meta: Optional[List[Dict[str, Any]]] = None, #AST Metadata,Functions,Classes,Interfaces,Structs
 ) -> List[Dict[str, Any]]:
-    # FUNCTION PURPOSE:
-    # Orchestrates the chunking strategy per-file based on available metadata.
-    #
-    # WHEN IT RUNS:
-    # After AST parsing and before embedding.
-    #
-    # INPUT:
-    # A list of raw file dictionaries and their corresponding parsed AST metadata.
-    #
-    # OUTPUT:
-    # A flattened list of chunks ready for embedding.
-    
-    # Build a file_path -> metadata lookup if available
+    #Decides how each file should be split into chunks based on the information extracted during parsing.
     meta_lookup: Dict[str, Dict] = {}
     if parsed_meta:
         for fm in parsed_meta:
@@ -87,7 +37,7 @@ def chunk_files(
     for file in parsed_files:
         fp = file["file_path"]
         fm = meta_lookup.get(fp)
-
+        #Determine which chunking strategy to use
         if fm and _has_structural_symbols(fm):
             chunks = _semantic_chunks(file, fm)
         else:
@@ -98,38 +48,12 @@ def chunk_files(
     return all_chunks
 
 
-# ------------------------------------------------------------------ #
-# Semantic chunking
-# ------------------------------------------------------------------ #
-
+#Determine whether AST parsing found meaningful code structures: functions,classes,interfaces,structs
+#If any exist: Use Semantic Chunking --- Otherwise: Use Window Chunking
 def _has_structural_symbols(fm: Dict[str, Any]) -> bool:
     return bool(fm.get("functions") or fm.get("classes") or fm.get("interfaces") or fm.get("structs"))
 
-
-# ─────────────────────────────────────────────
-# LINES 91-193
-# PURPOSE:
-# Chunks a file strictly according to its logical boundaries (functions, classes).
-# Any code outside these boundaries (e.g., global imports) is caught by a
-# "remainder" window chunk generator.
-#
-# WHY IT EXISTS:
-# A fixed chunk size of 500 lines might slice a 600-line function right down
-# the middle. When a user asks "What does calculate_tax do?", the retrieval
-# system might retrieve the top half and miss the return statement. Semantic
-# chunking keeps the entire function intact as a single embedding vector.
-#
-# INTERVIEW QUESTION:
-# "What are the tradeoffs of semantic chunking?"
-#
-# GOOD ANSWER:
-# "Semantic chunking perfectly preserves logic, but it risks creating chunks
-# that exceed the embedding model's token limit if a function is massive.
-# In a robust system, we would recursively sub-chunk massive functions,
-# but for standard codebases, keeping the symbol intact yields significantly
-# higher recall."
-# ─────────────────────────────────────────────
-
+#semnatic chunking --- Create one chunk per: Function,Class,Interface,Struct
 def _semantic_chunks(
     file: Dict[str, Any],
     fm: Dict[str, Any],
@@ -186,7 +110,7 @@ def _semantic_chunks(
 
         MAX_LINES_PER_SYMBOL = 200
         MAX_CHARS_PER_CHUNK = 2000
-
+        #If exceeded: Function -> Sub-Chunks --- Example: lines 1-100,Lines 81-180,Lines 161-260 --- with overlap
         if len(chunk_lines) > MAX_LINES_PER_SYMBOL or len(content) > MAX_CHARS_PER_CHUNK:
             sub_chunk_size = 100
             sub_overlap = 20
@@ -196,7 +120,7 @@ def _semantic_chunks(
                 sub_content = "\n".join(chunk_lines[sub_idx:sub_end])
                 if len(sub_content) > MAX_CHARS_PER_CHUNK:
                     sub_content = sub_content[:MAX_CHARS_PER_CHUNK]
-                
+                #Every chunk produced looks like:
                 chunks.append(
                     _make_chunk(
                         file_path=file_path,
@@ -240,7 +164,7 @@ def _semantic_chunks(
             )
             chunk_index += 1
 
-        covered_lines.update(range(start, end + 1))
+        covered_lines.update(range(start, end + 1)) #Already Chunked Lines(similar to vis array)
 
     # Emit uncovered lines as window chunks
     uncovered = [i for i in range(1, len(lines) + 1) if i not in covered_lines]
@@ -270,24 +194,7 @@ def _semantic_chunks(
 
     return chunks
 
-
-# ─────────────────────────────────────────────
-# LINES 200-234
-# PURPOSE:
-# Traditional sliding-window chunking algorithm with line overlap.
-#
-# WHY IT EXISTS:
-# Fallback strategy. Tree-sitter might fail to parse a syntactically invalid
-# file, or the file might be a language we don't have an AST parser for
-# (e.g., .yaml, .txt, .sql).
-#
-# INTERVIEW NOTE:
-# "Why overlap chunks? Because if a single thought or loop spans lines 490-520,
-# and chunk 1 ends at 500 while chunk 2 begins at 501, neither chunk has the full
-# context. Overlapping by 64 lines guarantees that boundary-spanning context 
-# is captured completely in at least one vector."
-# ─────────────────────────────────────────────
-
+#Chunk files when no semantic structure exists --- Examples: yaml,json,sql,txt,env,config
 def _window_chunks(
     file: Dict[str, Any],
     chunk_size: int,
@@ -324,10 +231,7 @@ def _window_chunks(
     return chunks
 
 
-# ------------------------------------------------------------------ #
-# Helpers
-# ------------------------------------------------------------------ #
-
+#Create standardized chunk dictionary
 def _make_chunk(
     file_path: str,
     language: Optional[str],
@@ -352,12 +256,8 @@ def _make_chunk(
         "metadata": metadata or {},
     }
 
-
+#Some parsers provide start line but not  end line --- estimates end of symbol using indentation
 def _estimate_end(lines: List[str], start_idx: int, kind: str) -> int:
-    """
-    Rough heuristic for languages/parsers that don't emit end_lineno.
-    Walks forward until the indentation level returns to the baseline.
-    """
     if start_idx >= len(lines):
         return start_idx + 1
 
@@ -372,7 +272,7 @@ def _estimate_end(lines: List[str], start_idx: int, kind: str) -> int:
 
     return len(lines)
 
-
+#Used when processing uncovered lines
 def _consecutive_runs(line_numbers: List[int]) -> List[Tuple[int, int]]:
     """Collapse a sorted list of ints into (start, end) inclusive ranges."""
     if not line_numbers:

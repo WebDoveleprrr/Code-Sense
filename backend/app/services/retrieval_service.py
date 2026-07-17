@@ -1,4 +1,4 @@
-# backend/app/services/retrieval_service.py
+# backend/app/services/retrieval_service.py --- How do we search an indexed repository --- used by search.py and qa_service.py
 """
 CodeSense — Semantic Retrieval Service (v2)
 
@@ -18,31 +18,26 @@ This service is consumed by:
 
 from __future__ import annotations
 
-import time
-from typing import Any, Dict, List, Optional
+import time #Measure retrieval time
+from typing import Any, Dict, List, Optional #better readability
 
 from app_logger import logger
 
 from app.core.config import get_settings
-from app.core.exceptions import NotFoundError, SearchError
-from app.ml.embedding_pipeline import embed_query
-from app.models.chunk import ChunkDocument
+from app.core.exceptions import NotFoundError, SearchError #Return meaningful API errors
+from app.db.ml.embedding_pipeline import embed_query #Query->Embedding
+from app.models.chunk import ChunkDocument #MongoDB document --- Used to retrieve: Actual Chunk after FAISS search
 from app.models.repository import RepositoryDocument, RepoStatus
-from app.vector_store.faiss_store import FAISSStore
+from app.vector_store.faiss_store import FAISSStore #semnatic search
 from app.vector_store.metadata_store import MetadataStore
 
-from collections import OrderedDict
+from collections import OrderedDict #Used for: BM25 Cache
 # Global cache: repo_id -> (updated_at_timestamp, BM25Okapi, list of ChunkDocument)
 _bm25_cache: OrderedDict[str, tuple] = OrderedDict()
 MAX_CACHE_SIZE = 3
 
-# ---------------------------------------------------------------------------
-# Result schema
-# ---------------------------------------------------------------------------
 
-class RetrievalResult:
-    """Single ranked result from the retrieval pipeline."""
-
+class RetrievalResult: #Represents one search result
     __slots__ = (
         "chunk_id", "faiss_id", "file_path", "language",
         "start_line", "end_line", "content",
@@ -57,88 +52,67 @@ class RetrievalResult:
         return {s: getattr(self, s, None) for s in self.__slots__}
 
 
-# ---------------------------------------------------------------------------
-# RetrievalService
-# ---------------------------------------------------------------------------
-
+#Perform complete semantic retrieval
 class RetrievalService:
-    """
-    Stateless service; instantiated per-request via FastAPI Depends().
-    """
-
-    # ------------------------------------------------------------------ #
-    # Primary search method
-    # ------------------------------------------------------------------ #
-
+    
     async def retrieve(
         self,
-        repo_id: str,
-        query: str,
-        top_k: int = 5,
-        language_filter: Optional[str] = None,
-        chunk_type_filter: Optional[str] = None,
-        min_score: float = 0.0,
-        use_metadata_cache: bool = False,
+        repo_id: str, #Which repository
+        query: str, #User question
+        top_k: int = 5, #How many results
+        language_filter: Optional[str] = None, #programmong language
+        chunk_type_filter: Optional[str] = None, #Only: Functions,Classes,Windows
+        min_score: float = 0.0, #Discard weak matches
+        use_metadata_cache: bool = False, #Use: MetadataStore instead of MongoDB --- Faster.
     ) -> Dict[str, Any]:
-        """
-        Full semantic retrieval pipeline.
-
-        Args:
-            repo_id:             Target repository.
-            query:               Natural-language or code search string.
-            top_k:               Number of results to return (after filtering).
-            language_filter:     If set, only return chunks in this language.
-            chunk_type_filter:   If set, only return chunks of this type
-                                 (function | class | window).
-            min_score:           Discard results below this cosine score.
-            use_metadata_cache:  Prefer MetadataStore over MongoDB for metadata.
-
-        Returns:
-            dict with keys: success, query, repo_id, results, latency_ms
-        """
         t0 = time.perf_counter()
 
-        # -- Guard: repo must exist and be ready --
+        #Guard: repo must exist and be ready
         repo = await _get_ready_repo(repo_id)
 
-        # -- Step 1: Embed query --
+        #Embed query
         query_vec = embed_query(query)
 
-        # -- Step 2: FAISS ANN search (fetch 3× top_k to allow post-filtering) --
+        #FAISS ANN search (fetch 3× top_k to allow post-filtering)
         fetch_k = min(top_k * 3, 50)
         store = FAISSStore(repo_id=repo_id, index_path=repo.faiss_index_path)
-        faiss_ids, raw_scores = store.search(query_vec, top_k=fetch_k)
+        faiss_ids, raw_scores = store.search(query_vec, top_k=fetch_k) #Input: Query Vector --- Output: FAISS IDs + Similarity Scores
 
-        logger.debug(
-            "[{id}] FAISS returned {n} candidates for query '{q}'",
+        t_faiss = time.perf_counter()
+        logger.info(
+            "[{id}] FAISS returned {n} candidates for query '{q}' in {ms:.1f}ms",
             id=repo_id,
             n=len(faiss_ids),
             q=query[:60],
+            ms=(t_faiss - t0) * 1000,
         )
 
-        # -- Step 3: Hydrate metadata --
-        if use_metadata_cache:
+        #Hydrate metadata --- vector converting to code
+        if use_metadata_cache: #MetadataStore --- Fast,Disk Local
             faiss_results = await _hydrate_from_metadata_store(
                 repo_id=repo_id,
                 faiss_index_path=repo.faiss_index_path,
                 faiss_ids=faiss_ids,
                 scores=raw_scores,
             )
-        else:
+        else: #MongoDB --- Rich Documents,Always Complete
             faiss_results = await _hydrate_from_mongodb(
                 repo_id=repo_id,
                 faiss_ids=faiss_ids,
                 scores=raw_scores,
             )
+            
+        t_hydrate = time.perf_counter()
+        logger.info("[{id}] Metadata hydration time: {ms:.1f}ms", id=repo_id, ms=(t_hydrate - t_faiss) * 1000)
 
-        # -- Step 3.5: BM25 Retrieval --
+        #BM25 Retrieval(keyword retrieval)
         cached_val = _bm25_cache.get(repo_id)
-        if cached_val and cached_val[0] == repo.updated_at:
+        if cached_val and str(cached_val[0]) == str(repo.updated_at): #If BM25 already exists: Reuse it
             bm25, all_chunks = cached_val[1], cached_val[2]
             _bm25_cache.move_to_end(repo_id)
-        else:
+        else: #Read Every Chunk -> Tokenize -> Build BM25
             all_chunks = await ChunkDocument.find(ChunkDocument.repo_id == repo_id).to_list()
-            tokenized_corpus = [c.content.lower().split() for c in all_chunks]
+            tokenized_corpus = [c.content.lower().split() for c in all_chunks] #tokenise
             if tokenized_corpus:
                 from rank_bm25 import BM25Okapi
                 bm25 = BM25Okapi(tokenized_corpus)
@@ -173,7 +147,10 @@ class RetrievalService:
             bm25_results.sort(key=lambda x: x["score"], reverse=True)
             bm25_results = bm25_results[:fetch_k]
 
-        # -- Step 4: Reciprocal Rank Fusion (RRF) & Candidate Merge --
+        t_bm25 = time.perf_counter()
+        logger.info("[{id}] BM25 retrieval time: {ms:.1f}ms", id=repo_id, ms=(t_bm25 - t_hydrate) * 1000)
+
+        #Reciprocal Rank Fusion (RRF) & Candidate Merge
         faiss_ranks = {r.get("chunk_id") or str(r.get("faiss_id")): idx + 1 for idx, r in enumerate(faiss_results)}
         bm25_ranks = {r.get("chunk_id") or str(r.get("faiss_id")): idx + 1 for idx, r in enumerate(bm25_results)}
 
@@ -226,64 +203,86 @@ class RetrievalService:
         settings = get_settings()
         enable_reranking = getattr(settings, "ENABLE_RERANKING", True)
 
+        from app.db.ml.context_ranker import apply_ranking
+
+        import re
+        
+        def extract_highlights(query: str, content: str) -> List[str]:
+            words = [w for w in query.lower().split() if len(w) > 2]
+            if not words:
+                return []
+            lines = content.split('\n')
+            highlights = []
+            for line in lines:
+                if any(w in line.lower() for w in words):
+                    highlights.append(line.strip())
+                    if len(highlights) >= 3:
+                        break
+            return highlights
+
         if enable_reranking and unique_candidates:
-            try:
-                from sentence_transformers import CrossEncoder
-                import math
-                global _cross_encoder
-                if "_cross_encoder" not in globals() or _cross_encoder is None:
-                    # Upgrade from ms-marco-MiniLM-L-6-v2 to BAAI/bge-reranker-base
-                    _cross_encoder = CrossEncoder("BAAI/bge-reranker-base")
+            # We want context ranker to use the base RRF score
+            for c in unique_candidates:
+                c["score"] = c.get("rrf_score", 0.0)
+
+            t_before_ce = time.perf_counter()
+            ranked_dict = apply_ranking(
+                query=query,
+                retrieval_result={"results": unique_candidates[:top_k * 3]},
+                use_cross_encoder=True
+            )
+            # Recombine ranked top chunks with the rest
+            unique_candidates = ranked_dict["results"] + unique_candidates[top_k * 3:]
+            
+            # Map composite_score back to score for consistency
+            for c in unique_candidates:
+                c["score"] = c.get("composite_score", c.get("score", 0.0))
+                c["confidence"] = min(100, max(0, int(c["score"] * 100)))
+                c["ranking_explanation"] = f"RRF + Cross-encoder score: {c['score']:.4f}"
+                c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
+                c["highlights"] = extract_highlights(query, c.get("content", ""))
                 
-                # Re-rank only the top candidates to optimize performance
-                rerank_candidates = unique_candidates[:top_k * 3]
-                pairs = [(query, c["content"]) for c in rerank_candidates]
-                rerank_scores = _cross_encoder.predict(pairs)
-                
-                for idx, score in enumerate(rerank_scores):
-                    # Sigmoid function to normalize the score to [0, 1] range
-                    sig_score = 1.0 / (1.0 + math.exp(-float(score)))
-                    c = rerank_candidates[idx]
-                    c["rerank_score"] = float(score)
-                    c["final_score"] = sig_score
-                    c["score"] = sig_score
-                    c["ranking_explanation"] = (
-                        f"RRF score: {c.get('rrf_score', 0.0):.4f}. "
-                        f"Re-ranked using BAAI/bge-reranker-base."
-                    )
-                    c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
-                
-                # Sort by new rerank scores
-                rerank_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-                # Keep re-ranked candidates plus rest of unique candidates
-                unique_candidates = rerank_candidates + unique_candidates[top_k * 3:]
-            except Exception as e:
-                logger.error(f"Re-ranking failed: {e}. Falling back to combined scores.")
-                for c in unique_candidates:
-                    c["rerank_score"] = 0.0
-                    c["final_score"] = c["rrf_score"]
-                    c["score"] = c["final_score"]
-                    c["ranking_explanation"] = f"Fallback RRF score (RRF score: {c.get('rrf_score', 0.0):.4f})."
-                    c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
+            t_ce = time.perf_counter()
+            logger.info("[{id}] Cross encoder time: {ms:.1f}ms", id=repo_id, ms=(t_ce - t_before_ce) * 1000)
         else:
             for c in unique_candidates:
-                c["rerank_score"] = 0.0
-                c["final_score"] = c["rrf_score"]
-                c["score"] = c["final_score"]
+                c["score"] = c.get("rrf_score", 0.0)
+                # Map RRF score (which typically ranges 0-0.033 based on k=60) to 0-100
+                c["confidence"] = min(100, max(0, int((c["score"] / 0.033) * 100)))
                 c["ranking_explanation"] = f"Reciprocal Rank Fusion score (RRF score: {c.get('rrf_score', 0.0):.4f})."
                 c["source_citation"] = f"File: {c['file_path']}, lines {c['start_line']}–{c['end_line']}"
+                c["highlights"] = extract_highlights(query, c.get("content", ""))
 
         results = unique_candidates
 
-        # -- Step 4.5: Post-filters --
+        #Post-filters 
         if language_filter:
             results = [r for r in results if r["language"] == language_filter]
         if chunk_type_filter:
             results = [r for r in results if r["chunk_type"] == chunk_type_filter]
-        if min_score > 0:
-            results = [r for r in results if r["score"] >= min_score]
+            
+        # Adaptive Thresholding: Drop results significantly worse than the best match
+        if results:
+            top_score = results[0]["score"]
+            
+            filtered_results = []
+            for r in results:
+                raw_semantic = r.get("semantic_score", 0.0)
+                # Reject if the cosine similarity is below noise floor (e.g., < 0.25)
+                # Meaningless queries usually return < 0.2
+                if raw_semantic > 0 and raw_semantic < 0.25:
+                    continue
+                    
+                # RRF score threshold: must be at least 40% of the top score,
+                # and at least a base minimum (0.01 ensures it's in the top ranks).
+                if r["score"] < max(0.01, top_score * 0.4):
+                    continue
+                    
+                filtered_results.append(r)
+                
+            results = filtered_results
 
-        # -- Step 5: Deduplicate (same file_path + start_line) & trim --
+        #Deduplicate --- remove duplicate
         results = _deduplicate(results)[:top_k]
 
         elapsed_ms = (time.perf_counter() - t0) * 1_000
@@ -302,10 +301,7 @@ class RetrievalService:
             "latency_ms": round(elapsed_ms, 2),
         }
 
-    # ------------------------------------------------------------------ #
-    # Context assembly for RAG
-    # ------------------------------------------------------------------ #
-
+    #Retrieve and format top-k chunks as a combined context string for use in RAG prompt construction
     async def retrieve_context(
         self,
         repo_id: str,
@@ -313,10 +309,6 @@ class RetrievalService:
         top_k: int = 5,
         max_context_chars: int = 6_000,
     ) -> str:
-        """
-        Retrieve and format top-k chunks as a combined context string
-        for use in RAG prompt construction.
-        """
         result = await self.retrieve(repo_id=repo_id, query=query, top_k=top_k)
         chunks = result.get("results", [])
 
@@ -336,19 +328,13 @@ class RetrievalService:
 
         return "\n---\n".join(parts)
 
-    # ------------------------------------------------------------------ #
-    # Embedding info
-    # ------------------------------------------------------------------ #
-
+   
     def embedding_info(self) -> Dict[str, Any]:
         """Return current embedding model metadata."""
-        from app.ml.embedder import get_embedder
+        from app.db.ml.embedder import get_embedder
         return get_embedder().model_info()
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 async def _get_ready_repo(repo_id: str) -> RepositoryDocument:
     repo = await RepositoryDocument.get(repo_id)
@@ -401,13 +387,17 @@ async def _hydrate_from_mongodb(
     faiss_ids: List[int],
     scores: List[float],
 ) -> List[Dict[str, Any]]:
-    """Resolve chunk metadata from MongoDB (slower but authoritative)."""
+    """Resolve chunk metadata from MongoDB using bulk $in query."""
+    int_faiss_ids = [int(fid) for fid in faiss_ids]
+    chunks = await ChunkDocument.find(
+        {"repo_id": repo_id, "faiss_id": {"$in": int_faiss_ids}}
+    ).to_list()
+    
+    chunk_map = {c.faiss_id: c for c in chunks}
+    
     results = []
     for faiss_id, score in zip(faiss_ids, scores):
-        chunk = await ChunkDocument.find_one(
-            ChunkDocument.repo_id == repo_id,
-            ChunkDocument.faiss_id == int(faiss_id),
-        )
+        chunk = chunk_map.get(int(faiss_id))
         if chunk is None:
             continue
         results.append({

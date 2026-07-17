@@ -1845,3 +1845,821 @@ Impact Analysis
   ↓
 AI Review
 ```
+# Frontend Notes (Continuation)
+
+---
+
+# API Layer (`api.js`)
+
+## What is an API Layer?
+
+The API layer is the communication bridge between the React frontend and the FastAPI backend.
+
+Instead of every component directly making HTTP requests, all requests are centralized inside `api.js`.
+
+```text
+React Components
+        ↓
+Custom Hooks
+        ↓
+api.js
+        ↓
+Axios
+        ↓
+FastAPI Backend
+```
+
+---
+
+## Why have an API Layer?
+
+Without an API layer:
+
+```javascript
+Dashboard.jsx
+
+↓
+
+axios.get(...)
+
+Search.jsx
+
+↓
+
+axios.get(...)
+
+QAChat.jsx
+
+↓
+
+axios.post(...)
+```
+
+Problems:
+
+* Duplicate code
+* Hard to update URLs
+* Difficult authentication handling
+* Difficult error handling
+
+---
+
+With an API layer:
+
+```text
+Dashboard.jsx
+        │
+Search.jsx
+        │
+QAChat.jsx
+        │
+        ▼
+      api.js
+        │
+        ▼
+      Axios
+        │
+        ▼
+     FastAPI
+```
+
+Advantages:
+
+* Single source of truth
+* Easier maintenance
+* Reusable API functions
+* Cleaner components
+
+---
+
+# Axios
+
+## What is Axios?
+
+Axios is a JavaScript HTTP client.
+
+It is responsible for sending HTTP requests from the frontend to the backend.
+
+Examples:
+
+* GET
+* POST
+* PUT
+* DELETE
+
+---
+
+## Axios Responsibilities
+
+* Send HTTP requests
+* Receive HTTP responses
+* Automatically convert JSON
+* Attach headers
+* Handle interceptors
+* Handle request cancellation
+* Handle errors
+
+---
+
+## Axios does NOT authenticate users.
+
+A very common misconception.
+
+Axios only transports requests.
+
+Authentication is performed by the backend.
+
+---
+
+# Axios vs Fetch
+
+| Axios                     | Fetch API             |
+| ------------------------- | --------------------- |
+| External library          | Built into browser    |
+| Automatic JSON conversion | Manual conversion     |
+| Request interceptors      | No interceptors       |
+| Response interceptors     | No interceptors       |
+| Better error handling     | Manual error handling |
+
+---
+
+## Why CodeSense uses Axios
+
+Because it provides:
+
+* Cleaner syntax
+* Request interceptors
+* Response interceptors
+* Automatic JSON parsing
+* Better authentication support
+
+---
+
+# Axios Instance
+
+Instead of writing
+
+```javascript
+axios.get(...)
+```
+
+everywhere,
+
+CodeSense creates one configured Axios instance.
+
+Example:
+
+```text
+Axios Instance
+        │
+        ├── Base URL
+        ├── Timeout
+        ├── Headers
+        └── Interceptors
+```
+
+Now every request automatically shares these settings.
+
+---
+
+# Base URL
+
+Example
+
+```text
+http://localhost:8000/api/v1
+```
+
+Instead of writing
+
+```text
+http://localhost:8000/api/v1/search
+
+http://localhost:8000/api/v1/repos
+
+http://localhost:8000/api/v1/qa
+```
+
+every time,
+
+CodeSense writes
+
+```text
+/search
+
+/repos
+
+/qa
+```
+
+The base URL is automatically prefixed.
+
+---
+
+# HTTP Methods
+
+## GET
+
+Used to retrieve data.
+
+Example:
+
+```text
+Get Repository List
+```
+
+---
+
+## POST
+
+Used to create or process data.
+
+Example:
+
+```text
+Upload Repository
+
+Ask Question
+
+Semantic Search
+```
+
+---
+
+## PUT
+
+Updates existing data.
+
+---
+
+## DELETE
+
+Deletes data.
+
+---
+
+# Are GET and POST API Calls?
+
+Yes.
+
+Every HTTP request sent to the backend is an API call.
+
+Example:
+
+```text
+GET /repositories
+
+POST /search
+
+POST /qa
+
+DELETE /repositories/{id}
+```
+
+All are API calls.
+
+---
+
+# Request Interceptors
+
+Before Axios sends a request,
+
+it passes through the request interceptor.
+
+Purpose:
+
+Modify the request before sending.
+
+Example:
+
+```text
+Request
+
+↓
+
+Request Interceptor
+
+↓
+
+Attach JWT
+
+↓
+
+Backend
+```
+
+---
+
+## Why attach JWT?
+
+Every protected endpoint requires authentication.
+
+Instead of manually adding
+
+```text
+Authorization:
+Bearer <token>
+```
+
+to every request,
+
+the interceptor automatically attaches it.
+
+---
+
+# Response Interceptors
+
+After the backend responds,
+
+Axios passes the response through another interceptor.
+
+Purpose:
+
+* Detect expired tokens
+* Handle errors
+* Refresh authentication
+* Retry requests
+
+---
+
+Flow:
+
+```text
+Backend
+
+↓
+
+401 Unauthorized
+
+↓
+
+Response Interceptor
+
+↓
+
+Refresh Token
+
+↓
+
+Retry Original Request
+```
+
+---
+
+# JWT (JSON Web Token)
+
+JWT is NOT authentication.
+
+JWT is proof of identity.
+
+The frontend stores the JWT.
+
+The backend verifies it.
+
+---
+
+JWT contains information like:
+
+* User ID
+* Email
+* Expiration Time
+* Signature
+
+---
+
+# Authentication Flow
+
+```text
+User Login
+
+↓
+
+Backend verifies credentials
+
+↓
+
+Backend creates JWT
+
+↓
+
+Frontend stores JWT
+
+↓
+
+Future Requests
+
+↓
+
+Axios attaches JWT
+
+↓
+
+Backend verifies JWT
+
+↓
+
+Access Granted
+```
+
+---
+
+# Who actually authenticates?
+
+Not Axios.
+
+Not React.
+
+The backend authenticates.
+
+---
+
+Flow:
+
+```text
+React
+
+↓
+
+Axios
+
+↓
+
+Authorization Header
+
+↓
+
+FastAPI
+
+↓
+
+JWT Verification
+
+↓
+
+Authenticated?
+```
+
+---
+
+# Authentication vs Authorization
+
+## Authentication
+
+Question answered:
+
+> Who are you?
+
+Example:
+
+Verify JWT
+
+---
+
+## Authorization
+
+Question answered:
+
+> Are you allowed to do this?
+
+Example:
+
+Can this user access this repository?
+
+---
+
+Authentication always happens before authorization.
+
+---
+
+# Axios vs JWT
+
+Many beginners confuse these.
+
+## Axios
+
+Responsible for:
+
+* Sending requests
+* Receiving responses
+
+Think of Axios as the courier.
+
+---
+
+## JWT
+
+Responsible for:
+
+Proving user identity.
+
+Think of JWT as the passport.
+
+---
+
+## Backend
+
+Responsible for:
+
+Authenticating the user.
+
+Think of FastAPI as airport security.
+
+---
+
+Flow:
+
+```text
+JWT
+
+↓
+
+Axios carries JWT
+
+↓
+
+Backend verifies JWT
+
+↓
+
+Authentication succeeds
+```
+
+---
+
+# Interceptor Flow
+
+```text
+React Component
+
+↓
+
+API Function
+
+↓
+
+Axios Instance
+
+↓
+
+Request Interceptor
+
+↓
+
+Attach JWT
+
+↓
+
+Backend
+
+↓
+
+Response
+
+↓
+
+Response Interceptor
+
+↓
+
+Return Data
+```
+
+---
+
+# Error Handling
+
+Instead of every component writing
+
+```javascript
+try {
+    ...
+}
+catch {
+    ...
+}
+```
+
+the API layer centralizes common error handling.
+
+Advantages:
+
+* Cleaner components
+* Consistent error messages
+* Easier maintenance
+
+---
+
+# Why Components Shouldn't Call Axios Directly
+
+Bad Architecture:
+
+```text
+Dashboard
+
+↓
+
+Axios
+
+Search
+
+↓
+
+Axios
+
+QA
+
+↓
+
+Axios
+```
+
+Good Architecture:
+
+```text
+Dashboard
+      │
+Search
+      │
+QA
+      │
+      ▼
+    api.js
+      │
+      ▼
+    Axios
+```
+
+Benefits:
+
+* Reusability
+* Maintainability
+* Centralized authentication
+* Centralized configuration
+
+---
+
+# Complete Frontend Request Flow
+
+```text
+User Clicks Search
+
+↓
+
+SemanticSearch.jsx
+
+↓
+
+useSearch.js
+
+↓
+
+searchApi.search()
+
+↓
+
+Axios Instance
+
+↓
+
+Request Interceptor
+
+↓
+
+Attach JWT
+
+↓
+
+POST /search
+
+↓
+
+FastAPI
+
+↓
+
+Response
+
+↓
+
+React UI
+```
+
+---
+
+# Interview Questions
+
+## Q1 Why create an Axios instance?
+
+To centralize configuration such as base URL, headers, timeout, and interceptors so every request shares the same configuration.
+
+---
+
+## Q2 Why use request interceptors?
+
+To automatically attach authentication tokens and perform common request modifications before sending them.
+
+---
+
+## Q3 Why use response interceptors?
+
+To centralize response handling such as token expiration, retries, and common error processing.
+
+---
+
+## Q4 Does Axios authenticate the user?
+
+No.
+
+Axios only transports HTTP requests.
+
+The backend authenticates by verifying the JWT.
+
+---
+
+## Q5 What is the purpose of JWT?
+
+JWT carries the user's identity and authentication claims.
+
+The backend verifies the JWT before allowing access to protected resources.
+
+---
+
+## Q6 Why have an API layer?
+
+An API layer separates networking logic from UI components, improving maintainability, reusability, and code organization.
+
+---
+
+# Common Mistakes
+
+❌ Axios is NOT authentication.
+
+Axios only sends requests.
+
+---
+
+❌ JWT does NOT authenticate by itself.
+
+The backend verifies the JWT.
+
+---
+
+❌ React components should not directly call backend endpoints.
+
+Networking should be centralized inside the API layer.
+
+---
+
+❌ Authentication and Authorization are different.
+
+Authentication:
+
+Who are you?
+
+Authorization:
+
+What are you allowed to do?
+
+---
+
+# Key Architecture Principle
+
+```text
+React Components
+
+↓
+
+Hooks
+
+↓
+
+api.js
+
+↓
+
+Axios
+
+↓
+
+FastAPI
+
+↓
+
+Business Logic
+
+↓
+
+Database
+```
+
+Every layer has a single responsibility.
+
+* Components handle UI.
+* Hooks manage frontend state and logic.
+* `api.js` manages communication.
+* Axios sends requests.
+* FastAPI processes requests.
+* Backend services execute business logic.
+* Database stores persistent data.
+
+This separation of concerns keeps the application modular, scalable, and easy to maintain.

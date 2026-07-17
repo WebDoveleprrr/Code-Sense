@@ -124,9 +124,12 @@ export default function SemanticSearch() {
       {!loading && results.length > 0 && (
         <div className="space-y-6">
           <h3 className="text-lg font-semibold text-slate-50 mb-4">Search Results</h3>
-          {results.map((result, idx) => (
-            <ResultCard key={idx} result={result} query={query} />
-          ))}
+          {(() => {
+            const maxScore = Math.max(...results.map(r => r.final_score || r.composite_score || r.score || 0));
+            return results.map((result, idx) => (
+              <ResultCard key={idx} result={{...result, maxScore}} query={query} />
+            ));
+          })()}
         </div>
       )}
 
@@ -134,8 +137,8 @@ export default function SemanticSearch() {
       {!loading && meta && results.length === 0 && !error && (
         <div className="text-center py-20 bg-slate-900 border border-slate-800 rounded-3xl">
           <Search size={40} className="text-slate-600 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-slate-50 mb-2">No relevant code found</h3>
-          <p className="text-slate-400">Try rephrasing your query or using different terminology.</p>
+          <h3 className="text-xl font-semibold text-slate-50 mb-2">No sufficiently relevant results found.</h3>
+          <p className="text-slate-400">Try refining your query.</p>
         </div>
       )}
     </div>
@@ -145,6 +148,25 @@ export default function SemanticSearch() {
 function ResultCard({ result, query }) {
   const [expanded, setExpanded] = useState(false);
   const lang = result.language || "text";
+
+  let relevance = "Low Relevance";
+  let relevanceColor = "text-slate-400 bg-slate-400/10 border-slate-400/20";
+  const score = result.final_score || result.composite_score || result.score || 0;
+  
+  // Calibrated dynamically against the max score in the current result set
+  // This handles cross-encoder (0-1) and RRF (0-0.033) elegantly without hardcoded absolute thresholds.
+  const relativeScore = result.maxScore ? (score / result.maxScore) : score;
+  
+  if (relativeScore >= 0.85 || score > 0.8) {
+      relevance = "Highly Relevant";
+      relevanceColor = "text-emerald-400 bg-emerald-400/10 border-emerald-400/20";
+  } else if (relativeScore >= 0.60 || score > 0.5) {
+      relevance = "Relevant";
+      relevanceColor = "text-indigo-400 bg-indigo-400/10 border-indigo-400/20";
+  } else if (relativeScore >= 0.30 || score > 0.3) {
+      relevance = "Moderately Relevant";
+      relevanceColor = "text-amber-400 bg-amber-400/10 border-amber-400/20";
+  }
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-glass hover:border-indigo-500/30 transition-all">
@@ -165,8 +187,8 @@ function ResultCard({ result, query }) {
               {result.symbol_name}
             </span>
           )}
-          <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-full border border-emerald-400/20">
-            <CheckCircle2 size={12} /> {Math.round(result.score * 100)}% Match
+          <span className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border ${relevanceColor}`}>
+            <CheckCircle2 size={12} /> {relevance}
           </span>
         </div>
       </div>
@@ -180,12 +202,44 @@ function ResultCard({ result, query }) {
               This code block defines the {result.symbol_name || "logic"} inside {result.file_path.split('/').pop()}. 
               It handles the core functionality related to this component.
             </p>
+            {result.confidence !== undefined && (
+              <div className="mt-3 flex items-center gap-2 text-sm">
+                <span className="text-slate-400">Confidence Score:</span>
+                <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full ${result.confidence > 80 ? 'bg-emerald-500' : result.confidence > 50 ? 'bg-indigo-500' : 'bg-amber-500'}`} 
+                    style={{ width: `${result.confidence}%` }}
+                  />
+                </div>
+                <span className="font-mono text-slate-300">{result.confidence}%</span>
+              </div>
+            )}
           </div>
           <div>
             <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Why this matches</h5>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              High semantic relevance to your query "{query}". The vector similarity score indicates this block directly implements the requested behavior.
-            </p>
+            {result.highlights && result.highlights.length > 0 ? (
+              <ul className="text-sm text-slate-300 leading-relaxed space-y-1">
+                {result.highlights.map((highlight, idx) => (
+                  <li key={idx} className="flex items-start gap-2 bg-slate-800/50 p-2 rounded text-xs font-mono mb-1">
+                    <span className="text-indigo-400 shrink-0">▸</span>
+                    <span>{highlight}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : result.match_reasons && result.match_reasons.length > 0 ? (
+              <ul className="text-sm text-slate-300 leading-relaxed space-y-1">
+                {result.match_reasons.map((reason, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <CheckCircle2 size={14} className="text-emerald-500 shrink-0 mt-0.5" />
+                    <span>{reason}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-300 leading-relaxed">
+                High semantic relevance to your query "{query}". The vector similarity score indicates this block directly implements the requested behavior.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -211,7 +265,7 @@ function ResultCard({ result, query }) {
             language={lang}
             startLine={result.start_line}
             showCopy
-            compact
+            compact={!expanded}
             maxHeight="none"
           />
           {!expanded && (

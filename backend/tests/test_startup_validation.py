@@ -1,6 +1,6 @@
 # backend/tests/test_startup_validation.py
 import pytest
-from app.ml.llm_client import normalize_model_name
+from app.db.ml.llm_client import normalize_model_name
 
 def test_normalize_model_name():
     # Verify target tag matching, default latest stripping, registry path cleaning

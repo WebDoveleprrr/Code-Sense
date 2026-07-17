@@ -28,6 +28,10 @@ WEIGHT_FAISS_SCORE: float = 0.70       # base semantic similarity (cosine)
 WEIGHT_CROSS_ENCODER: float = 0.20     # cross-encoder re-rank bonus
 WEIGHT_SYMBOL_MATCH: float = 0.07      # symbol-name token overlap
 WEIGHT_POSITION: float = 0.03          # file-position tiebreaker
+WEIGHT_FILE_MATCH: float = 0.10        # filename token overlap boost
+WEIGHT_TEST_PENALTY: float = -0.30     # penalty for test files
+WEIGHT_IMPL_BOOST: float = 0.15        # implementation files get a boost
+WEIGHT_DOC_PENALTY: float = -0.15      # documentation files get a slight penalty
 
 # Chunk-type multipliers applied to the final composite score
 CHUNK_TYPE_BOOST: Dict[str, float] = {
@@ -57,10 +61,10 @@ def _get_cross_encoder():
     try:
         from sentence_transformers import CrossEncoder
         _cross_encoder = CrossEncoder(
-            "cross-encoder/ms-marco-MiniLM-L-6-v2",
+            "BAAI/bge-reranker-base",
             max_length=512,
         )
-        logger.info("Cross-encoder loaded: cross-encoder/ms-marco-MiniLM-L-6-v2")
+        logger.info("Cross-encoder loaded: BAAI/bge-reranker-base")
     except Exception as exc:
         logger.warning(
             "Cross-encoder unavailable ({err}). Using FAISS scores only.", err=str(exc)
@@ -169,19 +173,59 @@ def rank_chunks(
         symbol_score = _token_overlap(query, chunk.get("symbol_name"))
         position_score = _normalise_position(chunk.get("start_line", 0))
 
+        # Heuristics: file match boost, test file penalty, and impl/doc weighting
+        file_path_lower = str(chunk.get("file_path", "")).lower()
+        filename = file_path_lower.split("/")[-1] if "/" in file_path_lower else file_path_lower
+        file_match_score = _token_overlap(query, filename)
+        is_test = 1.0 if "test" in file_path_lower else 0.0
+        is_impl = 1.0 if file_path_lower.endswith((".py", ".ts", ".tsx", ".js", ".java", ".cpp", ".go", ".rs", ".c", ".h")) else 0.0
+        is_doc = 1.0 if file_path_lower.endswith((".md", ".rst", ".txt")) else 0.0
+
         composite = (
             WEIGHT_FAISS_SCORE * faiss_score
             + WEIGHT_CROSS_ENCODER * ce_score
             + WEIGHT_SYMBOL_MATCH * symbol_score
             + WEIGHT_POSITION * position_score
+            + WEIGHT_FILE_MATCH * file_match_score
+            + WEIGHT_TEST_PENALTY * is_test
+            + WEIGHT_IMPL_BOOST * is_impl
+            + WEIGHT_DOC_PENALTY * is_doc
         )
 
         # Apply chunk-type boost
         chunk_type = chunk.get("chunk_type", "window")
         boost = CHUNK_TYPE_BOOST.get(chunk_type, 1.0)
         composite *= boost
+        
+        match_reasons = []
+        if faiss_score > 0.0:
+            match_reasons.append("Semantic embedding similarity")
+        if float(chunk.get("lexical_score", 0.0)) > 0.0:
+            match_reasons.append("BM25 keyword match")
+        if ce_score > 0.0:
+            match_reasons.append("Cross-encoder reranker boost")
+        if file_match_score > 0.0:
+            match_reasons.append("Filename matched query")
+        if symbol_score > 0.0:
+            if chunk_type == "class":
+                match_reasons.append("Class name matched")
+            elif chunk_type == "function":
+                match_reasons.append("Function name matched")
+            else:
+                match_reasons.append("Symbol name matched")
+        if boost > 1.0:
+            match_reasons.append("Implementation file bonus")
+        if is_test > 0.0:
+            match_reasons.append("Test file penalty applied")
 
-        chunk = {**chunk, "composite_score": round(composite, 6)}
+        chunk = {
+            **chunk,
+            "composite_score": round(composite, 6),
+            "retrieval_score": round(faiss_score, 6),
+            "reranker_score": round(ce_score, 6),
+            "final_score": round(composite, 6),
+            "match_reasons": match_reasons,
+        }
         scored.append(chunk)
 
     # Sort descending by composite score

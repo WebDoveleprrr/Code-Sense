@@ -27,8 +27,8 @@ class HealthResponse(BaseModel):
 
 @router.get("", response_model=HealthResponse, summary="Basic liveness probe")
 async def health_check(settings: Settings = Depends(get_settings)) -> HealthResponse:
-    from app.ml.llm_client import get_provider
-    from app.ml.embedder import get_embedder
+    from app.db.ml.llm_client import get_provider
+    from app.db.ml.embedder import get_embedder
     
     try:
         embedder = get_embedder()

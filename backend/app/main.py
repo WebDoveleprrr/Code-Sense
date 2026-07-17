@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("[ENV CHECK] LLM_PROVIDER={provider} OPENAI_API_KEY loaded={key}", provider=llm_provider, key=openai_key_loaded) #print to logs
 
     # Startup validation
-    from app.ml.llm_client import validate_startup
+    from app.db.ml.llm_client import validate_startup
     try:
         # runs is gemini/openai/ollama/anthropic working before server starts
         await validate_startup() #(IMPORTANT)
@@ -112,6 +112,11 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root():
         return JSONResponse({"service": settings.APP_NAME, "version": settings.APP_VERSION, "docs": "/docs"})
+
+    # Health alias
+    @app.get("/health", tags=["System"])
+    async def health_alias():
+        return {"status": "ok", "service": settings.APP_NAME}
 
     return app #give completed backend(IMPORTANT)
 

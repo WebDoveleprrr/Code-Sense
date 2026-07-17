@@ -1,6 +1,6 @@
 # backend/tests/test_tree_sitter_parser.py
 import pytest
-from app.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
+from app.db.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
 
 def test_parse_python():
     source = """

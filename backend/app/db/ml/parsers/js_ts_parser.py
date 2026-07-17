@@ -11,13 +11,9 @@ Uses regex-based extraction (no Node.js runtime required) to pull:
 
 from __future__ import annotations
 
-import re
+import re #regex import
 from typing import Any, Dict, List, Optional
 
-
-# ------------------------------------------------------------------ #
-# Regex patterns
-# ------------------------------------------------------------------ #
 
 # Functions
 _FUNC_DECL = re.compile(
@@ -77,24 +73,8 @@ _TYPE_ALIAS = re.compile(
 )
 
 
-# ------------------------------------------------------------------ #
-# Public entry point
-# ------------------------------------------------------------------ #
-
+#Parse a JS/TS source string and return structured metadata
 def parse_js_ts(source: str, file_path: str = "", language: str = "javascript") -> Dict[str, Any]:
-    """
-    Parse a JS/TS source string and return structured metadata:
-    {
-        "language": "javascript" | "typescript",
-        "file_path": ...,
-        "functions": [...],
-        "classes": [...],
-        "imports": [...],
-        "comments": [...],
-        "interfaces": [...],   # TS only
-        "type_aliases": [...], # TS only
-    }
-    """
     lines = source.splitlines()
 
     result: Dict[str, Any] = {
@@ -113,9 +93,6 @@ def parse_js_ts(source: str, file_path: str = "", language: str = "javascript") 
     return result
 
 
-# ------------------------------------------------------------------ #
-# Functions
-# ------------------------------------------------------------------ #
 
 def _extract_functions(source: str, lines: List[str]) -> List[Dict[str, Any]]:
     funcs = []
@@ -159,9 +136,6 @@ def _extract_functions(source: str, lines: List[str]) -> List[Dict[str, Any]]:
     return unique
 
 
-# ------------------------------------------------------------------ #
-# Classes
-# ------------------------------------------------------------------ #
 
 def _extract_classes(source: str, lines: List[str]) -> List[Dict[str, Any]]:
     classes = []
@@ -178,10 +152,6 @@ def _extract_classes(source: str, lines: List[str]) -> List[Dict[str, Any]]:
         )
     return classes
 
-
-# ------------------------------------------------------------------ #
-# Imports
-# ------------------------------------------------------------------ #
 
 def _extract_imports(source: str) -> List[Dict[str, Any]]:
     imports = []
@@ -213,10 +183,6 @@ def _extract_imports(source: str) -> List[Dict[str, Any]]:
     return imports
 
 
-# ------------------------------------------------------------------ #
-# Comments
-# ------------------------------------------------------------------ #
-
 def _extract_comments(source: str, lines: List[str]) -> List[Dict[str, Any]]:
     comments = []
 
@@ -244,10 +210,8 @@ def _extract_comments(source: str, lines: List[str]) -> List[Dict[str, Any]]:
     return sorted(comments, key=lambda c: c["lineno"])
 
 
-# ------------------------------------------------------------------ #
-# TypeScript-specific
-# ------------------------------------------------------------------ #
 
+# TypeScript-specific
 def _extract_interfaces(source: str, lines: List[str]) -> List[Dict[str, Any]]:
     return [
         {
@@ -269,17 +233,12 @@ def _extract_type_aliases(source: str, lines: List[str]) -> List[Dict[str, Any]]
     ]
 
 
-# ------------------------------------------------------------------ #
-# Helpers
-# ------------------------------------------------------------------ #
-
+#Convert a character offset to a 1-based line number
 def _offset_to_line(source: str, offset: int) -> int:
-    """Convert a character offset to a 1-based line number."""
     return source[:offset].count("\n") + 1
 
-
+#Return the JSDoc comment immediately preceding *offset*, if any
 def _preceding_jsdoc(source: str, offset: int) -> Optional[str]:
-    """Return the JSDoc comment immediately preceding *offset*, if any."""
     snippet = source[:offset].rstrip()
     m = _JSDOC.search(snippet)
     if m and snippet.endswith("*/"):
@@ -287,9 +246,8 @@ def _preceding_jsdoc(source: str, offset: int) -> Optional[str]:
         return text
     return None
 
-
+#Split and clean a raw parameter string
 def _clean_params(params_str: str) -> List[str]:
-    """Split and clean a raw parameter string."""
     if not params_str.strip():
         return []
     # Remove type annotations (everything after : up to the next , or end)
@@ -299,9 +257,8 @@ def _clean_params(params_str: str) -> List[str]:
 def _split_csv(text: str) -> List[str]:
     return [s.strip() for s in text.split(",") if s.strip()]
 
-
+#Parse `{ foo, bar as baz }` or `* as ns` or bare default name
 def _parse_import_clause(clause: str) -> List[str]:
-    """Parse `{ foo, bar as baz }` or `* as ns` or bare default name."""
     clause = clause.strip()
     if clause.startswith("{") and clause.endswith("}"):
         inner = clause[1:-1]

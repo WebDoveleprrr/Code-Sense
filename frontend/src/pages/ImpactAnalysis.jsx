@@ -7,6 +7,7 @@ import { useSearchParams } from "react-router-dom"; //get url
 import { Shuffle, Loader2, FileCode2, ArrowRight, Server, Globe, FileStack } from "lucide-react";
 import { useRepository } from "../hooks/useRepositories";
 import RepoSelector from "../components/ui/RepoSelector"; //Choose repository
+import { impactApi, repositoriesApi } from "../services/api";
 
 export default function ImpactAnalysis() {
   const [searchParams] = useSearchParams();
@@ -14,12 +15,59 @@ export default function ImpactAnalysis() {
   const { repo } = useRepository(repoId);
   
   const [loading, setLoading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState("auth/middleware.py"); //Target file for analysis
+  const [selectedFile, setSelectedFile] = useState(""); //Target file for analysis
+  const [impactData, setImpactData] = useState(null);
+  const [error, setError] = useState(null);
+  const [algorithm, setAlgorithm] = useState("bfs");
+  const abortControllerRef = React.useRef(null);
+
+  React.useEffect(() => {
+    setImpactData(null);
+    setError(null);
+    setSelectedFile("");
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [repoId]);
+  
   const isRepoReady = repo ? repo.status === "ready" : false;
-  //mock implementation
-  const handleAnalyze = () => {
+  
+  const handleAnalyze = async () => {
+    if (!repoId || !selectedFile.trim()) return;
+    
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
-    setTimeout(() => setLoading(false), 1500); // Mock analysis time
+    setError(null);
+    setImpactData(null);
+    
+    try {
+      const res = await impactApi.analyze({
+        repo_id: repoId,
+        file_path: selectedFile.trim(),
+        algorithm
+      }, { signal: controller.signal });
+      if (res.success) {
+        setImpactData(res);
+      } else {
+        throw new Error(res.message || "Failed to calculate impact radius.");
+      }
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.message === 'canceled' || err.code === 'ERR_CANCELED') {
+        return;
+      }
+      setError(err.message || "An error occurred during analysis.");
+    } finally {
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+      }
+    }
   };
 
   return (
@@ -54,16 +102,50 @@ export default function ImpactAnalysis() {
               <label className="block text-xs font-medium text-slate-400 mb-2">File Path</label>
               <input 
                 type="text" 
+                list="file-list"
                 value={selectedFile}
                 onChange={(e) => setSelectedFile(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-50 focus:border-indigo-500 outline-none"
+                placeholder="Start typing file path..."
               />
+              <datalist id="file-list">
+                {repo?.repo_metadata?.files
+                  ?.filter(f => {
+                    const path = (f.file_path || (typeof f === 'string' ? f : '')).toLowerCase();
+                    return path && !path.includes('docs') && !path.includes('test') && !path.includes('example') && !path.includes('vendor') && !path.includes('cache') && !path.includes('venv') && !path.includes('env') && !path.includes('generated');
+                  })
+                  .map((f, i) => (
+                  <option key={i} value={f.file_path || (typeof f === 'string' ? f : '')} />
+                ))}
+              </datalist>
+            </div>
+            <div className="mb-6">
+              <label className="block text-xs font-medium text-slate-400 mb-2">Traversal Algorithm</label>
+              <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700">
+                <button
+                  onClick={() => setAlgorithm("bfs")}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    algorithm === "bfs" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  BFS (Breadth-First)
+                </button>
+                <button
+                  onClick={() => setAlgorithm("dfs")}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    algorithm === "dfs" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  DFS (Depth-First)
+                </button>
+              </div>
             </div>
             <button
               onClick={handleAnalyze}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors shadow-glow flex items-center justify-center gap-2"
+              disabled={loading || !selectedFile.trim() || !isRepoReady}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl font-medium transition-colors shadow-glow flex items-center justify-center gap-2"
             >
-              Analyze Blast Radius
+              {loading ? <Loader2 size={18} className="animate-spin" /> : null} Analyze Blast Radius
             </button>
           </div>
 
@@ -74,6 +156,18 @@ export default function ImpactAnalysis() {
                 <Loader2 size={40} className="text-indigo-500 animate-spin mb-4" />
                 <p className="text-slate-400">Calculating dependency blast radius...</p>
               </div>
+            ) : error ? (
+              <div className="h-full flex flex-col items-center justify-center">
+                <Shuffle size={48} className="text-red-500 mb-4" />
+                <h3 className="text-xl font-semibold text-slate-50 mb-2">Analysis Failed</h3>
+                <p className="text-slate-400">{error}</p>
+              </div>
+            ) : !impactData ? (
+              <div className="h-full flex flex-col items-center justify-center">
+                <Shuffle size={48} className="text-slate-600 mb-4 opacity-50" />
+                <h3 className="text-xl font-semibold text-slate-50 mb-2">Ready to Analyze</h3>
+                <p className="text-slate-400">Enter a target file path and click Analyze.</p>
+              </div>
             ) : (
               <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
                 
@@ -83,53 +177,60 @@ export default function ImpactAnalysis() {
                     <div className="w-12 h-12 bg-indigo-500/10 rounded-xl flex items-center justify-center">
                       <FileCode2 size={24} className="text-indigo-400" />
                     </div>
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-50">{selectedFile}</h2>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-xl font-bold text-slate-50 truncate" title={selectedFile}>{selectedFile}</h2>
                       <p className="text-sm text-slate-400">Impact Analysis Summary</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <MetricBox icon={FileStack} label="Files Affected" value="23" color="text-amber-400" />
-                    <MetricBox icon={Server} label="Services Affected" value="4" color="text-rose-400" />
-                    <MetricBox icon={Globe} label="Imports Affected" value="12" color="text-sky-400" />
+                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                    <MetricBox icon={Globe} label="Impact Score" value={Math.round(impactData.impact_score || 0)} color="text-indigo-400" />
+                    <MetricBox icon={Globe} label="Risk Level" value={impactData.risk_level || "Low"} color={impactData.risk_level === 'Critical' ? 'text-rose-500' : impactData.risk_level === 'High' ? 'text-orange-500' : impactData.risk_level === 'Medium' ? 'text-amber-400' : 'text-emerald-400'} />
+                    <MetricBox icon={FileStack} label="Files Affected" value={impactData.affected_files?.length || 0} color="text-amber-400" />
+                    <MetricBox icon={Server} label="Functions Affected" value={impactData.affected_functions?.length || 0} color="text-rose-400" />
+                    <MetricBox icon={Server} label="Classes Affected" value={impactData.affected_classes?.length || 0} color="text-purple-400" />
+                    <MetricBox icon={Globe} label="Dependency Depth" value={impactData.dependency_depth || 0} color="text-blue-400" />
+                    <MetricBox icon={ArrowRight} label="Fan-In" value={impactData.fan_in || 0} color="text-teal-400" />
+                    <MetricBox icon={ArrowRight} label="Fan-Out" value={impactData.fan_out || 0} color="text-teal-400" />
                   </div>
+                  
+                  {impactData.score_reason && (
+                    <div className="mt-6 p-4 bg-slate-900 border border-slate-700 rounded-xl">
+                      <h4 className="text-sm font-semibold text-slate-400 mb-2">Score Explanation</h4>
+                      <p className="text-slate-300 text-sm">{impactData.score_reason}</p>
+                    </div>
+                  )}
                 </div>
 
-                {/* Visual Flow Diagram Mock */}
+                {/* Visual Flow Diagram */}
                 <div className="bg-slate-950 border border-slate-800 rounded-3xl p-8 shadow-glass">
-                  <h3 className="text-lg font-semibold text-slate-50 mb-8">Impact Flow</h3>
+                  <h3 className="text-lg font-semibold text-slate-50 mb-8">Impact Flow (Dependency Graph)</h3>
                   
-                  <div className="flex flex-col lg:flex-row items-stretch justify-center gap-8">
-                    {/* Origin */}
-                    <div className="flex flex-col justify-center items-center">
-                      <div className="px-6 py-4 bg-indigo-600/10 border-2 border-indigo-500 rounded-2xl text-center shadow-[0_0_20px_rgba(99,102,241,0.2)]">
-                        <FileCode2 size={24} className="text-indigo-400 mx-auto mb-2" />
-                        <span className="font-mono text-sm text-indigo-300">{selectedFile}</span>
+                  {(!impactData.graph_nodes || impactData.graph_nodes.length === 0) ? (
+                    <div className="py-8 text-center text-slate-500">
+                      No cascading impact found for this target.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-8">
+                      <div className="overflow-x-auto pb-4 bg-slate-900 rounded-2xl p-4 border border-slate-800 min-h-[300px]">
+                        <MermaidChart data={impactData} selectedFile={selectedFile} />
+                      </div>
+                      
+                      <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800">
+                         <h4 className="text-sm font-semibold text-slate-400 mb-4 tracking-wider uppercase">Traversal Order ({algorithm.toUpperCase()})</h4>
+                         <div className="flex flex-wrap gap-2">
+                           {impactData.traversal_order?.map((nodeId, idx) => (
+                             <div key={idx} className="flex items-center gap-2">
+                               <div className="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-xs font-mono text-slate-300 max-w-[200px] truncate" title={nodeId}>
+                                 {nodeId.split('::').pop()}
+                               </div>
+                               {idx < impactData.traversal_order.length - 1 && <ArrowRight size={14} className="text-slate-600" />}
+                             </div>
+                           ))}
+                         </div>
                       </div>
                     </div>
-
-                    <div className="hidden lg:flex flex-col justify-center items-center">
-                      <ArrowRight size={24} className="text-slate-600" />
-                    </div>
-
-                    {/* Level 1 */}
-                    <div className="flex flex-col gap-4 justify-center">
-                      <FlowBox label="api/routers/users.py" type="file" />
-                      <FlowBox label="api/routers/auth.py" type="file" />
-                      <FlowBox label="services/auth_service.py" type="service" />
-                    </div>
-
-                    <div className="hidden lg:flex flex-col justify-center items-center">
-                      <ArrowRight size={24} className="text-slate-600" />
-                    </div>
-
-                    {/* Level 2 */}
-                    <div className="flex flex-col gap-4 justify-center">
-                      <FlowBox label="Frontend API Client" type="external" />
-                      <FlowBox label="User Microservice" type="external" />
-                    </div>
-                  </div>
+                  )}
                 </div>
 
               </div>
@@ -153,19 +254,77 @@ function MetricBox({ icon: Icon, label, value, color }) {
   );
 }
 
-function FlowBox({ label, type }) {
-  const getStyle = () => {
-    switch(type) {
-      case 'file': return 'bg-slate-800 border-slate-700 text-slate-300';
-      case 'service': return 'bg-amber-900/20 border-amber-500/30 text-amber-300';
-      case 'external': return 'bg-rose-900/20 border-rose-500/30 text-rose-300';
-      default: return 'bg-slate-800 border-slate-700 text-slate-300';
-    }
-  };
+import mermaid from "mermaid";
+import { useEffect, useRef } from "react";
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    primaryColor: '#1e293b',
+    primaryTextColor: '#f8fafc',
+    primaryBorderColor: '#334155',
+    lineColor: '#475569',
+    secondaryColor: '#312e81',
+    tertiaryColor: '#0f172a'
+  },
+  flowchart: { curve: 'basis', padding: 20 },
+  securityLevel: 'loose'
+});
+
+function MermaidChart({ data, selectedFile }) {
+  const containerRef = useRef(null);
+  
+  useEffect(() => {
+    if (!containerRef.current || !data) return;
+    
+    let lines = ["graph TD"];
+    
+    const safeNodeId = (id) => id.replace(/[^a-zA-Z0-9_]/g, "_");
+    
+    const targetSuffix = selectedFile.trim().replace(/\\/g, '/').replace('./', '').replace(/^[\/]+/, '');
+    
+    data.graph_nodes?.forEach(n => {
+        let label = (n.label || n.id).replace(/"/g, "'");
+        let safeId = safeNodeId(n.id);
+        lines.push(`${safeId}["${label}"]`);
+        
+        if (n.id.endsWith(targetSuffix) || n.id.includes(targetSuffix)) {
+            lines.push(`style ${safeId} fill:#4f46e5,stroke:#818cf8,stroke-width:2px`);
+        } else {
+            lines.push(`style ${safeId} fill:#1e293b,stroke:#334155`);
+        }
+    });
+    
+    data.graph_edges?.forEach(e => {
+        let source = safeNodeId(e.source);
+        let target = safeNodeId(e.target);
+        lines.push(`${source} --> ${target}`);
+    });
+    const graphString = lines.join("\n");
+    const renderChart = async () => {
+      try {
+        const id = `mermaid-impact-${Math.random().toString(36).substr(2, 9)}`;
+        const { svg } = await mermaid.render(id, graphString);
+        if (containerRef.current) {
+          containerRef.current.innerHTML = svg;
+        }
+      } catch (err) {
+        console.error("Mermaid rendering failed:", err);
+        if (containerRef.current) {
+          containerRef.current.innerHTML = `<div class="p-4 text-rose-400 bg-rose-950/20 border border-rose-900 rounded">Failed to render graph.</div>`;
+        }
+      }
+    };
+    
+    renderChart();
+  }, [data, selectedFile]);
 
   return (
-    <div className={`px-4 py-3 border rounded-xl font-mono text-sm text-center ${getStyle()}`}>
-      {label}
-    </div>
+    <div 
+      ref={containerRef} 
+      className="flex justify-center items-center w-full min-h-[300px]"
+    />
   );
 }

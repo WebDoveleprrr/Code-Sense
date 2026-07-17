@@ -3,7 +3,7 @@
 CodeSense — Architecture Router
 """
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from app.services.architecture_service import ArchitectureService
@@ -28,12 +28,18 @@ class ArchitectureResponse(BaseModel):
 
 @router.get("/{repo_id}", response_model=ArchitectureResponse)
 async def get_architecture(
+    request: Request,
     repo_id: str,
     provider: Optional[str] = None,
+    force_regenerate: bool = False,
     service: ArchitectureService = Depends(ArchitectureService)
 ) -> ArchitectureResponse:
+    if await request.is_disconnected():
+        return ArchitectureResponse(success=False, latency_ms=0)
+        
     result = await service.summarise(
         repo_id=repo_id,
         provider=provider,
+        force_regenerate=force_regenerate,
     )
     return ArchitectureResponse(**result)

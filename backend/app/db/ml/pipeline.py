@@ -1,21 +1,17 @@
-# backend/app/ml/pipeline.py
+# backend/app/ml/pipeline.py --- how a repo becomes searchable
 """
 CodeSense — End-to-End Ingestion Pipeline (v3)
 
-Orchestrates: clone/extract → parse → AST parse → metadata → chunk
-              → embed → FAISS index → metadata sidecar → MongoDB persist → repo stats
+Orchestrates: clone/extract → parse → AST parse → metadata → chunk → embed → FAISS index → metadata sidecar → MongoDB persist → repo stats
 
 New in v3 (Streaming Architecture)
-----------------------------------
 * Completely lazy evaluation: files are read, parsed, chunked, and embedded one by one.
-* Bounded memory footprint regardless of repository size.
-* Incremental batching into FAISS and MongoDB.
 """
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime
+import asyncio #Run blocking operations without freezing FastAPI
+from datetime import datetime #used for timestamps
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -23,19 +19,19 @@ from app_logger import logger
 
 from app.core.config import get_settings
 from app.models.chunk import ChunkDocument
-from app.models.repository import RepositoryDocument, RepoSource, RepoStatus
+from app.models.repository import RepositoryDocument, RepoSource, RepoStatus #Represents repository details in MongoDB
 
-
+#Choose important files first --- for priority
 def rank_files(files_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     def get_score(path_str: str) -> int:
         path_lower = path_str.lower()
-        if any(path_lower.endswith(name) for name in ["main.py", "app.py", "server.py", "index.js", "index.ts"]):
+        if any(path_lower.endswith(name) for name in ["main.py", "app.py", "server.py", "index.js", "index.ts"]): #highest priority for these
             return 100
         if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["src", "api", "routes", "controllers", "services", "models", "schemas"]):
             return 80
         if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["config", "utils", "helpers"]):
             return 50
-        if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["tests", "docs", "examples"]):
+        if any(f"/{d}/" in f"/{path_lower}" or path_lower.startswith(f"{d}/") for d in ["tests", "docs", "examples"]): #least for these
             return 10
         return 30
 
@@ -72,20 +68,20 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
 
     try:
         log_mem("Startup")
-        repo_dir = await _acquire_source(repo, settings)
+        repo_dir = await _acquire_source(repo, settings) #Acquire Repository from github or extract zip --- stored to local folder
         logger.info("[{id}] Source at {dir}", id=repo_id, dir=str(repo_dir))
 
-        repo.status = RepoStatus.PARSING
+        repo.status = RepoStatus.PARSING ##repo status changed to parsing
         await repo.save()
 
-        from app.ml.repo_parser import parse_repository, read_and_decode_file
-        parsed_files = await parse_repository(repo_dir)
+        from app.db.ml.repo_parser import parse_repository, read_and_decode_file
+        parsed_files = await parse_repository(repo_dir) #Parse Repository --- Collect all valid code files
         logger.info("[{id}] {n} files collected.", id=repo_id, n=len(parsed_files))
 
         total_files = len(parsed_files)
         skipped_files = 0
         indexing_mode = "standard"
-        MAX_INDEXED_FILES = 1000
+        MAX_INDEXED_FILES = 1000 #Large Repository Handling --- only high priority 1000 files taken(rank_files())
 
         if total_files > MAX_INDEXED_FILES:
             logger.info("[{id}] Repository exceeds {max} files (found {total}). Applying priority selection.", id=repo_id, max=MAX_INDEXED_FILES, total=total_files)
@@ -94,26 +90,26 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
             skipped_files = total_files - MAX_INDEXED_FILES
             indexing_mode = "prioritized"
 
-        repo.status = RepoStatus.CHUNKING
+        repo.status = RepoStatus.CHUNKING #repo status changed to chunking
         await repo.save()
 
         # Prepare Stores
-        from app.ml.embedder import get_embedder
+        from app.db.ml.embedder import get_embedder
         from app.vector_store.faiss_store import FAISSStore
         from app.vector_store.metadata_store import MetadataStore
         
         log_mem("Before get_embedder()")
-        embedder = get_embedder()
+        embedder = get_embedder() #Initialize Embedding Model --- Chunk->Vector
         log_mem("After get_embedder()")
         
         index_path = settings.VECTOR_STORE_DIR / repo_id
-        store = FAISSStore(repo_id=repo_id, index_path=str(index_path))
+        store = FAISSStore(repo_id=repo_id, index_path=str(index_path)) #Creates vector index --- Store embeddings
         # Give an arbitrary expected count; it can grow dynamically
         store.initialize(embedder.dim, expected_count=len(parsed_files)*10, model_name=embedder.model_name)
-        meta_store = MetadataStore(repo_id=repo_id, index_path=str(index_path))
+        meta_store = MetadataStore(repo_id=repo_id, index_path=str(index_path)) #Stores: FAISS ID,Chunk ID,File Path,Language --- Mapping information --- metadata
 
         chunks_buffer: List[Dict[str, Any]] = []
-        BATCH_SIZE = 50
+        BATCH_SIZE = 50 #50 Chunks->Embed Together->Store Together --- faster
         
         # Aggregated stats
         total_lines = 0
@@ -127,10 +123,10 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
         total_chunks_processed = 0
         total_tokens = 0
 
-        from app.ml.parsers import parse_source
-        from app.ml.metadata_generator import build_file_metadata, _file_summary
-        from app.ml.chunker import chunk_files
-        from app.ml.embedding_pipeline import prepare_texts
+        from app.db.ml.parsers import parse_source
+        from app.db.ml.metadata_generator import build_file_metadata, _file_summary
+        from app.db.ml.chunker import chunk_files
+        from app.db.ml.embedding_pipeline import prepare_texts
 
         async def process_batch():
             nonlocal chunks_buffer, faiss_idx_offset, total_chunks_processed, total_tokens
@@ -140,11 +136,11 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
             log_mem("Before embedding")
             batch_texts = prepare_texts(chunks_buffer)
             # we run it in a thread so it doesn't block the event loop
-            batch_vectors = await asyncio.to_thread(embedder.embed_batch, batch_texts, True, False)
+            batch_vectors = await asyncio.to_thread(embedder.embed_batch, batch_texts, True, False) #Embedding
             log_mem("After embedding")
             
             log_mem("Before FAISS insertion")
-            store.add_vectors(batch_vectors)
+            store.add_vectors(batch_vectors) #FAISS storage --- it stores vectors
             log_mem("After FAISS insertion")
             
             log_mem("Before Mongo insertion")
@@ -165,14 +161,14 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
                 )
                 for idx, c in enumerate(chunks_buffer)
             ]
-            await ChunkDocument.insert_many(chunk_docs)
+            await ChunkDocument.insert_many(chunk_docs) #MongoDB storage -- it stores chunks
             chunk_ids = [str(doc.id) for doc in chunk_docs]
             log_mem("After Mongo insertion")
             
             # Since we append incrementally, we must load the existing records
             if meta_store.exists() and meta_store.count == 0:
-                meta_store.load()
-                
+                meta_store.load() #Metadata Sidecar --- Creates mapping: FAISS ID -> Chunk ID -> File -> Lines
+    
             for faiss_id_local, chunk in enumerate(chunks_buffer):
                 record = {
                     "faiss_id": faiss_idx_offset + faiss_id_local,
@@ -199,7 +195,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
             gc.collect()
             log_mem("After gc.collect()")
 
-        for file_meta in parsed_files:
+        for file_meta in parsed_files: #Processes files one by one --- streaming architecture
             log_mem(f"Before file processing: {file_meta['file_path']}")
             path = repo_dir / file_meta["file_path"]
             content = await asyncio.to_thread(read_and_decode_file, path)
@@ -210,16 +206,16 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
             file_meta["line_count"] = content.count("\n") + 1
             
             try:
-                ast_result = await asyncio.to_thread(parse_source, file_meta)
+                ast_result = await asyncio.to_thread(parse_source, file_meta) #Understand code structure --- Extract: Functions,Classes,Imports,Symbols
             except Exception as exc:
                 logger.warning("[{id}] AST parse failed for {fp}: {err}", id=repo_id, fp=file_meta["file_path"], err=str(exc))
                 ast_result = {"language": file_meta["language"], "file_path": file_meta["file_path"]}
 
-            enriched_meta = build_file_metadata(file_meta, ast_result)
+            enriched_meta = build_file_metadata(file_meta, ast_result) #Produces: Function Count,Class Count,Import Count,Language,Line Count
             
             log_mem("Before chunking")
             file_chunks = await asyncio.to_thread(
-                chunk_files,
+                chunk_files, #Chunking --- chunking.py enters
                 parsed_files=[file_meta],
                 chunk_size=settings.CHUNK_SIZE,
                 overlap=settings.CHUNK_OVERLAP,
@@ -252,10 +248,10 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
         if chunks_buffer:
             await process_batch()
 
-        await asyncio.to_thread(store.save)
-        await asyncio.to_thread(meta_store.save)
+        await asyncio.to_thread(store.save) #Save FAISS --- Writes index to disk
+        await asyncio.to_thread(meta_store.save) #Save Metadata Sidecar --- Writes metadata JSON
         
-        # Step 10 — Update RepositoryDocument stats
+        # Step 10 — Update RepositoryDocument stats(dashboard info)
         repo.total_files = total_files
         repo.total_chunks = total_chunks_processed
         repo.total_tokens = total_tokens
@@ -277,7 +273,7 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
             "indexing_mode": indexing_mode,
             "embedding_dim": embedder.dim,
         }
-        repo.status = RepoStatus.READY
+        repo.status = RepoStatus.READY #Repository becomes searchable
         await repo.save()
         logger.info("[{id}] STATUS READY. Pipeline complete.", id=repo_id)
         
@@ -291,14 +287,14 @@ async def run_ingestion_pipeline(repo: RepositoryDocument) -> None:
     finally:
         if 'repo_dir' in locals() and repo_dir.exists():
             import shutil
-            shutil.rmtree(repo_dir, ignore_errors=True)
+            shutil.rmtree(repo_dir, ignore_errors=True) #Deletes temporary repository folder
             logger.info("[{id}] Source directory {dir} successfully cleaned up.", id=repo_id, dir=str(repo_dir))
 
-
+#Get repository source --- Returns: Path to local repository
 async def _acquire_source(repo: RepositoryDocument, settings) -> Path:
     if repo.source == RepoSource.GITHUB:
-        from app.ml.github_loader import clone_repo
+        from app.db.ml.github_loader import clone_repo
         return await clone_repo(repo.github_url, settings.UPLOAD_DIR / str(repo.id))
     else:
-        from app.ml.zip_loader import extract_zip
+        from app.db.ml.zip_loader import extract_zip
         return await extract_zip(repo.zip_filename, settings.UPLOAD_DIR / str(repo.id))

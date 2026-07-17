@@ -15,10 +15,21 @@ class ImpactRequest(BaseModel):
 
 class ImpactResponse(BaseModel):
     success: bool
+    impact_score: float
+    risk_level: str
     affected_files: List[str]
     affected_functions: List[str]
+    affected_classes: List[str]
+    incoming_dependencies: int
+    outgoing_dependencies: int
+    dependency_depth: int
+    fan_in: int
+    fan_out: int
     dependency_chain: List[List[str]]
-    risk_score: float
+    score_reason: Optional[str] = Field(default=None)
+    traversal_order: Optional[List[str]] = Field(default_factory=list)
+    graph_nodes: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    graph_edges: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
 
 @router.post("/analyze", response_model=ImpactResponse)
 async def analyze_impact(
@@ -26,6 +37,27 @@ async def analyze_impact(
     service: ImpactService = Depends(ImpactService)
 ):
     try:
+        from app.models.repository import RepositoryDocument
+        repo = await RepositoryDocument.get(payload.repo_id)
+        if repo:
+            files = repo.repo_metadata.get("files", [])
+            normalized = payload.file_path.replace('\\', '/').replace('./', '').lstrip('/')
+            exists = False
+            for f in files:
+                f_path = f.get("file_path", "") if isinstance(f, dict) else str(f)
+                f_path_norm = f_path.replace('\\', '/')
+                if f_path_norm.endswith(normalized) or normalized in f_path_norm:
+                    exists = True
+                    break
+            if not exists:
+                return ImpactResponse(
+                    success=True, impact_score=0.0, risk_level="Low",
+                    affected_files=[], affected_functions=[], affected_classes=[],
+                    incoming_dependencies=0, outgoing_dependencies=0, dependency_depth=0,
+                    fan_in=0, fan_out=0, dependency_chain=[], score_reason="File not found.",
+                    graph_nodes=[], graph_edges=[]
+                )
+
         graph = await service.get_or_build_graph(payload.repo_id)
         result = service.analyze_impact(
             graph=graph,
@@ -35,13 +67,26 @@ async def analyze_impact(
         )
         return ImpactResponse(
             success=True,
-            affected_files=result["affected_files"],
-            affected_functions=result["affected_functions"],
-            dependency_chain=result["dependency_chain"],
-            risk_score=result["risk_score"]
+            impact_score=result.get("impact_score", 0.0),
+            risk_level=result.get("risk_level", "Low"),
+            affected_files=result.get("affected_files", []),
+            affected_functions=result.get("affected_functions", []),
+            affected_classes=result.get("affected_classes", []),
+            incoming_dependencies=result.get("incoming_dependencies", 0),
+            outgoing_dependencies=result.get("outgoing_dependencies", 0),
+            dependency_depth=result.get("dependency_depth", 0),
+            fan_in=result.get("fan_in", 0),
+            fan_out=result.get("fan_out", 0),
+            dependency_chain=result.get("dependency_chain", []),
+            score_reason=result.get("score_reason", ""),
+            traversal_order=result.get("traversal_order", []),
+            graph_nodes=result.get("graph_nodes", []),
+            graph_edges=result.get("graph_edges", [])
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        import logging
+        logging.getLogger("app").exception(f"Impact analysis error: {str(exc)}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while analyzing the impact. Please try again.")
 
 @router.post("/rebuild", response_model=Dict[str, Any])
 async def rebuild_graph(

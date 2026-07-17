@@ -11,17 +11,13 @@ Uses the built-in `ast` module to extract:
 
 from __future__ import annotations
 
-import ast
+import ast #doesnt read comments
 import re
-import tokenize
+import tokenize #recovers comments
 from io import StringIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional #improves readability
 
-
-# ------------------------------------------------------------------ #
-# Public entry point
-# ------------------------------------------------------------------ #
-
+#Python Source -> Structured Metadata
 def parse_python(source: str, file_path: str = "") -> Dict[str, Any]:
     """
     Parse a Python source string and return a structured metadata dict:
@@ -47,12 +43,12 @@ def parse_python(source: str, file_path: str = "") -> Dict[str, Any]:
     }
 
     try:
-        tree = ast.parse(source)
+        tree = ast.parse(source) #Parse a Python source string and return a structured metadata dict --- done here
     except SyntaxError:
         return result
 
-    result["module_docstring"] = ast.get_docstring(tree)
-    result["functions"] = _extract_functions(tree)
+    result["module_docstring"] = ast.get_docstring(tree) #Useful for semantic search
+    result["functions"] = _extract_functions(tree) #Find all top-level functions
     result["classes"] = _extract_classes(tree)
     result["imports"] = _extract_imports(tree)
     result["comments"] = _extract_comments(source)
@@ -65,7 +61,7 @@ def parse_python(source: str, file_path: str = "") -> Dict[str, Any]:
 
 def _extract_functions(tree: ast.Module) -> List[Dict[str, Any]]:
     funcs = []
-    for node in ast.walk(tree):
+    for node in ast.walk(tree): #visits every node in the AST tree
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         # Skip methods — captured inside _extract_classes
@@ -74,11 +70,11 @@ def _extract_functions(tree: ast.Module) -> List[Dict[str, Any]]:
         funcs.append(_function_info(node))
     return funcs
 
-
+#Convert AST Function Node -> Dictionary
 def _function_info(node: ast.FunctionDef | ast.AsyncFunctionDef) -> Dict[str, Any]:
     return {
         "name": node.name,
-        "lineno": node.lineno,
+        "lineno": node.lineno, #Chunker needs Lines x-y for highlighting and search results
         "end_lineno": getattr(node, "end_lineno", None),
         "is_async": isinstance(node, ast.AsyncFunctionDef),
         "args": _extract_args(node.args),
@@ -96,8 +92,7 @@ def _extract_args(args: ast.arguments) -> List[Dict[str, Any]]:
     if args.kwarg:
         all_args.append(args.kwarg)
 
-    defaults_map: Dict[str, Any] = {}
-    # Positional defaults are right-aligned against args list
+    defaults_map: Dict[str, Any] = {} #AST stores defaults separately --- Parameter -> Default Value
     offset = len(args.args) - len(args.defaults)
     for i, default in enumerate(args.defaults):
         arg_name = args.args[offset + i].arg
@@ -117,10 +112,7 @@ def _extract_args(args: ast.arguments) -> List[Dict[str, Any]]:
     return result
 
 
-# ------------------------------------------------------------------ #
-# Classes
-# ------------------------------------------------------------------ #
-
+#Extract Class metadata
 def _extract_classes(tree: ast.Module) -> List[Dict[str, Any]]:
     classes = []
     for node in ast.walk(tree):
@@ -145,10 +137,7 @@ def _extract_classes(tree: ast.Module) -> List[Dict[str, Any]]:
     return classes
 
 
-# ------------------------------------------------------------------ #
-# Imports
-# ------------------------------------------------------------------ #
-
+#Useful for dependency analysis
 def _extract_imports(tree: ast.Module) -> List[Dict[str, Any]]:
     imports = []
     for node in ast.walk(tree):
@@ -176,10 +165,7 @@ def _extract_imports(tree: ast.Module) -> List[Dict[str, Any]]:
     return imports
 
 
-# ------------------------------------------------------------------ #
 # Comments (via tokenizer — ast strips them)
-# ------------------------------------------------------------------ #
-
 def _extract_comments(source: str) -> List[Dict[str, Any]]:
     comments = []
     try:
@@ -197,19 +183,15 @@ def _extract_comments(source: str) -> List[Dict[str, Any]]:
     return comments
 
 
-# ------------------------------------------------------------------ #
-# Helpers
-# ------------------------------------------------------------------ #
-
 def _annotation_to_str(node: Optional[ast.expr]) -> Optional[str]:
     if node is None:
         return None
     try:
-        return ast.unparse(node)
+        return ast.unparse(node) #convert metadata or dict to human readable
     except Exception:
         return None
 
-
+#Determine whether a FunctionDef belongs inside a ClassDef --- If yes, don't include it as top-level function
 def _is_method(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     tree: ast.Module,

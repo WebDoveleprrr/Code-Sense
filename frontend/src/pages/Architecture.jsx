@@ -1,11 +1,13 @@
 //How is this entire repository designed
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Building2, Loader2, Server, Layout, Database, Layers, ArrowRightLeft, Cpu } from "lucide-react";
-import { architectureApi } from "../services/api";
-import { useRepository } from "../hooks/useRepositories";
+import { Building2, Loader2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import mermaid from "mermaid";
 import RepoSelector from "../components/ui/RepoSelector";
 import toast from "react-hot-toast";
+import { useRepository } from "../hooks/useRepositories";
+import { architectureApi } from "../services/api";
 
 export default function Architecture() {
   const [searchParams] = useSearchParams();
@@ -14,37 +16,55 @@ export default function Architecture() {
   
   const [loading, setLoading] = useState(false);
   const [architecture, setArchitecture] = useState(null);
+  const [error, setError] = useState(null);
   const isRepoReady = repo ? repo.status === "ready" : false;
+  const abortControllerRef = React.useRef(null);
 
   useEffect(() => {
     if (repoId && isRepoReady) {
       loadArchitecture();
     } else {
       setArchitecture(null); //initial explanation is null
+      setError(null);
     }
   }, [repoId, isRepoReady]);
 
-  const loadArchitecture = async () => {
+  const loadArchitecture = async (forceRegenerate = false) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
+    setError(null);
     try {
-      // In a real app, this returns the generated architecture.
-      // We'll mock the sections as requested by the user since backend might not return perfectly structured JSON yet.
-      const res = await architectureApi.summarise(repoId);
+      const res = await architectureApi.summarise(repoId, undefined, forceRegenerate, { signal: controller.signal });
       
       setArchitecture({
-        summary: res.summary || "No summary available.",
-        entryPoints: res.entry_points?.length ? res.entry_points.join(", ") : "None detected.",
-        keyModules: res.key_modules?.length ? res.key_modules.join(", ") : "None detected.",
-        patterns: res.patterns?.length ? res.patterns.join(", ") : "None detected.",
-        dependencies: res.external_deps?.length ? res.external_deps.join(", ") : "None detected.",
-        recommendations: res.recommendations?.length ? res.recommendations.join("\n") : "No recommendations."
+        summary: res.summary || "No architecture summary available.",
+        grounding: res.grounding || null
       });
     } catch (err) {
+      if (err.name === 'CanceledError' || err.message === 'canceled' || err.code === 'ERR_CANCELED') {
+        return;
+      }
+      setError("Unable to generate architecture. Please try again.");
       toast.error(err.message || "Failed to load architecture");
     } finally {
-      setLoading(false);
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   return (
     <div className="p-8 max-w-6xl mx-auto font-sans">
@@ -77,76 +97,139 @@ export default function Architecture() {
           <Loader2 className="animate-spin text-indigo-500 mx-auto mb-4" size={40} />
           <p className="text-slate-400">Synthesizing architecture overview...</p>
         </div>
+      ) : error ? (
+        <div className="text-center py-20 bg-slate-900 border border-slate-800 rounded-3xl shadow-glass">
+          <Building2 size={48} className="text-rose-500 mx-auto mb-4 opacity-80" />
+          <h3 className="text-xl font-semibold text-slate-50 mb-2">Analysis Failed</h3>
+          <p className="text-slate-400 mb-6">{error}</p>
+          <button 
+            onClick={() => loadArchitecture(true)}
+            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-colors font-medium shadow-glow"
+          >
+            Retry Analysis
+          </button>
+        </div>
       ) : architecture ? (
-        <div className="space-y-8 animate-fade-in">
-          
-          {/* Visual Diagram */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-10 flex flex-col items-center overflow-x-auto shadow-glass">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-8 w-full text-left">System Flow</h3>
-            <div className="flex flex-col md:flex-row items-center gap-4 text-center min-w-max">
-              <DiagramNode icon={Layout} label="Frontend" color="text-sky-400" bg="bg-sky-400/10" border="border-sky-400/30" />
-              <DiagramArrow />
-              <DiagramNode icon={Server} label="API Layer" color="text-indigo-400" bg="bg-indigo-400/10" border="border-indigo-400/30" />
-              <DiagramArrow />
-              <DiagramNode icon={Cpu} label="Services" color="text-violet-400" bg="bg-violet-400/10" border="border-violet-400/30" />
-              <div className="flex flex-col gap-4 md:ml-4 mt-4 md:mt-0 relative">
-                {/* Visual connecting line for branch */}
-                <div className="hidden md:block absolute w-8 h-12 border-t-2 border-r-2 border-slate-700 right-full top-1/2 -translate-y-full -translate-x-4 rounded-tr-xl" />
-                <div className="hidden md:block absolute w-8 h-12 border-b-2 border-r-2 border-slate-700 right-full bottom-1/2 translate-y-full -translate-x-4 rounded-br-xl" />
-                
-                <DiagramNode icon={Database} label="MongoDB" color="text-emerald-400" bg="bg-emerald-400/10" border="border-emerald-400/30" />
-                <DiagramNode icon={Layers} label="FAISS" color="text-fuchsia-400" bg="bg-fuchsia-400/10" border="border-fuchsia-400/30" />
+        <div className="space-y-6 animate-fade-in pb-12">
+          {architecture.grounding && (
+            <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-2xl p-4 flex items-center justify-between shadow-glass">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
+                  <Building2 size={20} className="text-indigo-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-indigo-300">Evidence-Based Grounding</h4>
+                  <p className="text-xs text-indigo-400/80">Architecture synthesized strictly from retrieved context.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-6 pr-4">
+                <div className="text-right">
+                  <span className="block text-xl font-bold text-slate-100">{architecture.grounding.files_retrieved}</span>
+                  <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Files Retrieved</span>
+                </div>
+                <div className="w-px h-8 bg-slate-700/50"></div>
+                <div className="text-right">
+                  <span className="block text-xl font-bold text-slate-100">{architecture.grounding.chunks_retrieved}</span>
+                  <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Chunks Retrieved</span>
+                </div>
+                <div className="w-px h-8 bg-slate-700/50"></div>
+                <div className="text-right">
+                  <span className={`block text-xl font-bold ${architecture.grounding.confidence === 'High' ? 'text-emerald-400' : architecture.grounding.confidence === 'Medium' ? 'text-amber-400' : 'text-rose-400'}`}>
+                    {architecture.grounding.confidence}
+                  </span>
+                  <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Confidence</span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Sections */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <SectionCard title="System Overview" icon={Building2} content={architecture.summary} fullWidth />
-            <SectionCard title="Entry Points" icon={Layout} content={architecture.entryPoints} /> {/*The first file executed when an application starts*/}
-            <SectionCard title="Key Modules" icon={Server} content={architecture.keyModules} /> {/*Core business components*/}
-            <SectionCard title="Design Patterns" icon={Database} content={architecture.patterns} /> {/*Patterns reveal how the system is structured and help developers understand architecture quickly.*/}
-            <SectionCard title="Dependencies" icon={Layers} content={architecture.dependencies} />
-            <SectionCard title="Recommendations" icon={ArrowRightLeft} content={architecture.recommendations} fullWidth /> {/*AI-generated improvements*/}
-          </div>
-          
+          {parseSections(architecture.summary).map((section, idx) => (
+            <div key={idx} className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-glass">
+              {section.title !== "Overview" && (
+                <h2 className="text-xl font-bold text-slate-50 mb-6 flex items-center gap-2">
+                  <span className="text-indigo-400 font-mono text-sm">{idx + 1 < 10 ? `0${idx + 1}` : idx + 1}</span>
+                  {section.title.replace(/^\d+\.\s*/, '')}
+                </h2>
+              )}
+              <div className="text-slate-300 leading-relaxed text-[15px] overflow-x-auto prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-slate-950 prose-pre:border prose-pre:border-slate-800 prose-headings:text-slate-100 prose-a:text-indigo-400">
+                <ReactMarkdown
+                  components={{
+                    a: ({node, ...props}) => (
+                      <a 
+                        {...props} 
+                        className="text-indigo-400 hover:text-indigo-300 underline decoration-indigo-500/30 decoration-dashed underline-offset-4 hover:decoration-indigo-400 transition-colors cursor-pointer"
+                        title={props.href || props.children}
+                      />
+                    ),
+                    code({ node, inline, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || "");
+                      if (!inline && match && match[1] === "mermaid") {
+                        return <MermaidChart text={String(children).replace(/\n$/, "")} />;
+                      }
+                      return !inline && match ? (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      ) : (
+                        <code className="bg-slate-800 px-1.5 py-0.5 rounded-md text-sm text-indigo-300 font-mono" {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                  }}
+                >
+                  {section.content}
+                </ReactMarkdown>
+              </div>
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
   );
 }
 
-//reusable component for Frontend Box JSX,API Box JSX,Service Box JSX,Mongo Box JSX
-function DiagramNode({ icon: Icon, label, color, bg, border }) {
-  return (
-    <div className={`w-32 h-32 rounded-2xl flex flex-col items-center justify-center border-2 ${bg} ${border} shadow-lg relative z-10`}>
-      <Icon size={32} className={`${color} mb-3`} />
-      <span className={`text-sm font-semibold ${color}`}>{label}</span>
-    </div>
-  );
+function parseSections(markdown) {
+  const parts = markdown.split(/(?=^### )/m);
+  return parts.map(part => {
+    const match = part.match(/^### (.+)\n([\s\S]*)$/);
+    if (match) {
+      return { title: match[1].trim(), content: match[2].trim() };
+    }
+    return { title: "Overview", content: part.trim() };
+  }).filter(s => s.content.length > 0);
 }
 
-//Show system flow
-function DiagramArrow() {
-  return (
-    <div className="flex flex-col items-center px-2 py-4 md:py-0 md:px-4">
-      <div className="w-0.5 h-8 md:w-8 md:h-0.5 bg-slate-700" />
-      <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-slate-700 md:border-t-transparent md:border-b-transparent md:border-l-[8px] md:border-l-slate-700" />
-    </div>
-  );
-}
+function MermaidChart({ text }) {
+  const containerRef = React.useRef(null);
+  const [error, setError] = useState(false);
 
-//reusable component for the above 6 sections
-function SectionCard({ title, icon: Icon, content, fullWidth = false }) {
-  return (
-    <div className={`p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-glass ${fullWidth ? 'lg:col-span-2' : ''}`}>
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center shrink-0">
-          <Icon size={20} className="text-indigo-400" />
-        </div>
-        <h2 className="text-xl font-bold text-slate-50">{title}</h2>
+  React.useEffect(() => {
+    if (containerRef.current && text) {
+      try {
+        mermaid.initialize({ startOnLoad: true, theme: "dark" });
+        mermaid.render(`mermaid-${Math.random().toString(36).substring(7)}`, text).then(({ svg }) => {
+          if (containerRef.current) {
+            containerRef.current.innerHTML = svg;
+          }
+        }).catch(err => {
+          console.error("Mermaid render failed:", err);
+          setError(true);
+        });
+      } catch (err) {
+        console.error("Mermaid render failed:", err);
+        setError(true);
+      }
+    }
+  }, [text]);
+
+  if (error) {
+    return (
+      <div className="flex justify-center my-8 w-full p-6 bg-slate-950 border border-slate-800 border-dashed rounded-xl text-slate-500 italic text-sm">
+        No architecture diagram could be generated.
       </div>
-      <p className="text-slate-300 leading-relaxed text-lg">{content}</p>
-    </div>
-  );
+    );
+  }
+
+  return <div ref={containerRef} className="flex justify-center my-8 overflow-x-auto w-full p-6 bg-slate-950 border border-slate-800 rounded-2xl shadow-inner" />;
 }

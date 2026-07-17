@@ -37,6 +37,8 @@ class IndexHealthResponse(BaseModel):
     index_type: Optional[str]
     model_name: Optional[str]
     created_at: Optional[str]
+    
+    model_config = {'protected_namespaces': ()}
 
 
 class RebuildResponse(BaseModel):
@@ -198,7 +200,7 @@ async def _rebuild_task(repo_id: str) -> None:
             for c in chunk_docs
         ]
 
-        from app.ml.embedding_pipeline import generate_embeddings
+        from app.db.ml.embedding_pipeline import generate_embeddings
         from app.core.config import get_settings
 
         vectors, stats = generate_embeddings(chunks)

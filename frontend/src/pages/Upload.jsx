@@ -29,7 +29,8 @@ export default function UploadPage() {
   const [ingestState, setIngestState] = useState(null); // 'cloning', 'parsing', 'chunking', 'embedding', 'indexing', 'ready'
   const [indexedRepo, setIndexedRepo] = useState(null); //repo returned from backend
   const inputRef = useRef(null);
-  //runs when a file being dragged
+  const [overwrite, setOverwrite] = useState(false); //overwrite existing repo
+
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     setDragOver(false);
@@ -74,12 +75,12 @@ export default function UploadPage() {
     try {
       let res;
       if (file) {
-        res = await repositoriesApi.uploadZip(file, () => {});
+        res = await repositoriesApi.uploadZip(file, overwrite, () => {});
       } else {
         if (!url.includes("github.com")) {
           throw new Error("Must be a valid GitHub URL");
         }
-        res = await repositoriesApi.ingestGitHub(url.trim(), "main");
+        res = await repositoriesApi.ingestGitHub(url.trim(), "main", overwrite);
       }
       
       // Simulate the UI steps for the recruiter demo feel
@@ -89,7 +90,11 @@ export default function UploadPage() {
       setIndexedRepo(res);
       toast.success("Repository successfully indexed!");
     } catch (err) {
-      toast.error(err.message || "Failed to ingest repository");
+      if (err.message && err.message.includes("409")) {
+         toast.error("Repository already exists. Check 'Overwrite existing' to replace it.");
+      } else {
+         toast.error(err.message || "Failed to ingest repository");
+      }
       setIngestState(null);
     } finally {
       setLoading(false);
@@ -182,6 +187,19 @@ export default function UploadPage() {
                 </div>
               </div>
             )}
+
+            <div className="flex items-center gap-3 py-2">
+              <input
+                type="checkbox"
+                id="overwrite"
+                checked={overwrite}
+                onChange={(e) => setOverwrite(e.target.checked)}
+                className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-600 focus:ring-offset-slate-950"
+              />
+              <label htmlFor="overwrite" className="text-sm font-medium text-slate-300 select-none cursor-pointer">
+                Overwrite existing repository if it already exists
+              </label>
+            </div>
 
             <button
               onClick={handleSubmit}

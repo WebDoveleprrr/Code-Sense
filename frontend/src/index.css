@@ -4,32 +4,93 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Dark Mode (Default Theme) */
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+  
+  --color-indigo-50: #eef2ff;
+  --color-indigo-100: #e0e7ff;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-700: #4338ca;
+  
+  --color-glass-bg: rgba(15, 23, 42, 0.6);
+  --color-glass-border: rgba(255, 255, 255, 0.05);
+  
+  --color-link-stroke: rgba(99, 102, 241, 0.3);
+  --color-link-stroke-hover: rgba(99, 102, 241, 0.8);
+}
+
+html.light {
+  /* Light Mode (GitHub Theme mapping) */
+  /* Main Background */
+  --color-slate-950: #ffffff;
+  /* Sidebar / Cards / Slightly offset backgrounds */
+  --color-slate-900: #f6f8fa;
+  /* Borders and Separators */
+  --color-slate-800: #d0d7de;
+  --color-slate-700: #afb8c1;
+  /* Muted Text / Icons */
+  --color-slate-600: #8c959f;
+  --color-slate-500: #57606a;
+  --color-slate-400: #57606a;
+  /* Normal Text */
+  --color-slate-300: #24292f;
+  --color-slate-200: #24292f;
+  --color-slate-100: #1f2328;
+  /* Bold / Important Text */
+  --color-slate-50: #0e1116;
+  
+  /* Primary Accents (GitHub Blue) */
+  --color-indigo-50: #ddf4ff;
+  --color-indigo-100: #b6e3ff;
+  --color-indigo-500: #0969da;
+  --color-indigo-600: #0969da;
+  --color-indigo-700: #0550ae;
+  
+  --color-glass-bg: rgba(246, 248, 250, 0.8);
+  --color-glass-border: rgba(208, 215, 222, 0.5);
+  
+  --color-link-stroke: rgba(9, 105, 218, 0.3);
+  --color-link-stroke-hover: rgba(9, 105, 218, 0.8);
+}
+
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: #334155 transparent;
+  scrollbar-color: var(--color-slate-700) transparent;
 }
 
 *::-webkit-scrollbar { width: 6px; height: 6px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+*::-webkit-scrollbar-thumb { background: var(--color-slate-700); border-radius: 3px; }
 
 html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background: #020617; /* slate-950 */
-  color: #f8fafc; /* slate-50 */
+  background: var(--color-slate-950);
+  color: var(--color-slate-50);
   min-height: 100vh;
   overflow-x: hidden;
 }
 
 /* Glass panel */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.6); /* slate-900 */
+  background: var(--color-glass-bg);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-glass-border);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
@@ -37,7 +98,7 @@ body {
 .code-scroll {
   overflow-x: auto;
   scrollbar-width: thin;
-  scrollbar-color: #334155 transparent;
+  scrollbar-color: var(--color-slate-700) transparent;
 }
 
 /* Page transitions */
@@ -52,13 +113,13 @@ body {
 }
 
 .shimmer {
-  background: linear-gradient(90deg, #0f172a 25%, #1e293b 37%, #0f172a 63%);
+  background: linear-gradient(90deg, var(--color-slate-900) 25%, var(--color-slate-800) 37%, var(--color-slate-900) 63%);
   background-size: 1000px 100%;
   animation: shimmer 1.5s infinite linear;
 }
 
 /* D3 graph styles */
 .node circle { cursor: pointer; transition: all 0.2s; }
-.node text { font-family: 'Inter', sans-serif; font-size: 12px; fill: #94a3b8; pointer-events: none; }
-.link { stroke: rgba(99, 102, 241, 0.3); stroke-width: 1.5; }
-.link:hover { stroke: rgba(99, 102, 241, 0.8); }
+.node text { font-family: 'Inter', sans-serif; font-size: 12px; fill: var(--color-slate-400); pointer-events: none; }
+.link { stroke: var(--color-link-stroke); stroke-width: 1.5; }
+.link:hover { stroke: var(--color-link-stroke-hover); }

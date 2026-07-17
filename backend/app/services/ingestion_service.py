@@ -32,13 +32,23 @@ class IngestionService:
     # ---------------------------------------------------------------- #
 
     async def create_github_repo_record(
-        self, github_url: str, branch: str = "main", user_id: Optional[str] = None
+        self, github_url: str, branch: str = "main", user_id: Optional[str] = None, overwrite: bool = False
     ) -> RepositoryDocument:
         """Persist a pending RepositoryDocument for a GitHub URL."""
         try:
             owner, name = self._parse_github_url(github_url)
         except ValueError as exc:
             raise GitHubError(str(exc)) from exc
+
+        existing_doc = await RepositoryDocument.find_one(
+            RepositoryDocument.user_id == user_id,
+            RepositoryDocument.github_url == github_url
+        )
+        if existing_doc:
+            if not overwrite:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=409, detail="Repository already exists. Use overwrite=True to replace.")
+            await self.delete_repo(str(existing_doc.id))
 
         doc = RepositoryDocument(
             name=name,
@@ -57,7 +67,7 @@ class IngestionService:
         Background task: clone → parse → chunk → embed → index.
         Implemented in detail in the ML pipeline module.
         """
-        from app.ml.pipeline import run_ingestion_pipeline
+        from app.db.ml.pipeline import run_ingestion_pipeline
 
         doc = await RepositoryDocument.get(repo_id)
         if doc is None:
@@ -76,8 +86,21 @@ class IngestionService:
     # ZIP Ingestion
     # ---------------------------------------------------------------- #
 
-    async def create_zip_repo_record(self, file: UploadFile, user_id: Optional[str] = None) -> RepositoryDocument:
+    async def create_zip_repo_record(self, file: UploadFile, user_id: Optional[str] = None, overwrite: bool = False) -> RepositoryDocument:
         """Save the uploaded ZIP and create a pending RepositoryDocument."""
+        name = Path(file.filename or "repo").stem
+        
+        existing_doc = await RepositoryDocument.find_one(
+            RepositoryDocument.user_id == user_id,
+            RepositoryDocument.name == name,
+            RepositoryDocument.source == RepoSource.ZIP
+        )
+        if existing_doc:
+            if not overwrite:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=409, detail="Repository already exists. Use overwrite=True to replace.")
+            await self.delete_repo(str(existing_doc.id))
+
         upload_path = self.settings.UPLOAD_DIR / (file.filename or "upload.zip")
 
         try:
@@ -87,7 +110,6 @@ class IngestionService:
         except Exception as exc:
             raise UploadError(f"Failed to save uploaded file: {exc}") from exc
 
-        name = Path(file.filename or "repo").stem
         doc = RepositoryDocument(
             name=name,
             user_id=user_id,
@@ -101,7 +123,7 @@ class IngestionService:
 
     async def process_zip_repo(self, repo_id: str) -> None:
         """Background task: extract ZIP → parse → chunk → embed → index."""
-        from app.ml.pipeline import run_ingestion_pipeline
+        from app.db.ml.pipeline import run_ingestion_pipeline
 
         doc = await RepositoryDocument.get(repo_id)
         if doc is None:

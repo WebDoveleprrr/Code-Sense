@@ -1,4 +1,5 @@
-# backend/app/api/v1/repositories.py
+# backend/app/api/v1/repositories.py --- Repository Management API Layer
+from __future__ import annotations
 """
 CodeSense — Repository Management Endpoints (v2)
   POST   /repositories/github          — ingest from GitHub URL
@@ -8,17 +9,29 @@ CodeSense — Repository Management Endpoints (v2)
   GET    /repositories/{repo_id}/files  — list parsed files with symbol counts
   GET    /repositories/{repo_id}/chunks — list chunk documents
   DELETE /repositories/{repo_id}        — delete repository and all data
+
+Its job is to expose HTTP endpoints that allow the frontend to:
+
+Upload repositories
+Connect GitHub repositories
+View repository status
+View repository metadata
+View parsed files
+View chunks
+Check repository health
+Delete repositories
 """
 
-from __future__ import annotations
+from typing import List, Optional # Used for: List[ChunkResponse] ---- Array of ChunkResponse objects
 
-from typing import List, Optional
-
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile, status
+from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile, status, HTTPException
+#APIRouter --- Creates route groups Without it: All endpoints would be dumped into main.py
+#backgroundtasks --- Allows work after response. Important for ingestion.
 
 from app.core.exceptions import NotFoundError, UploadError
 from app.models.chunk import ChunkDocument
-from app.models.repository import RepositoryDocument, RepoStatus
+from app.models.repository import RepositoryDocument, RepoStatus, RepoSource
 from app.schemas.ingestion import (
     ChunkResponse,
     GitHubIngestRequest,
@@ -28,16 +41,13 @@ from app.schemas.ingestion import (
     RepoSummaryResponse,
 )
 from app.services.ingestion_service import IngestionService
-from app.core.auth import get_current_user
-from app.models.user import UserDocument
+from app.core.auth import get_current_user #JWT authentication
+from app.models.user import UserDocument #Represents authenticated use
 
-router = APIRouter()
+router = APIRouter() #Creates route group --- Later mounted in main.py.
 
 
-# ------------------------------------------------------------------ #
-# Conversion helpers
-# ------------------------------------------------------------------ #
-
+#Convert: RepositoryDocument into: RepoSummaryResponse --- Used in repository listing.
 def _doc_to_summary(doc: RepositoryDocument) -> RepoSummaryResponse:
     return RepoSummaryResponse(
         id=str(doc.id),
@@ -53,7 +63,7 @@ def _doc_to_summary(doc: RepositoryDocument) -> RepoSummaryResponse:
         created_at=doc.created_at.isoformat(),
     )
 
-
+#Detailed repository response --- Used by: GET /repositories/{id}
 def _doc_to_detail(doc: RepositoryDocument) -> RepoDetailResponse:
     raw_meta = doc.repo_metadata or {}
     return RepoDetailResponse(
@@ -84,7 +94,7 @@ def _doc_to_detail(doc: RepositoryDocument) -> RepoDetailResponse:
         ),
     )
 
-
+#Convert: ChunkDocument to ChunkResponse --- Used by: GET /chunks
 def _chunk_to_response(doc: ChunkDocument) -> ChunkResponse:
     return ChunkResponse(
         id=str(doc.id),
@@ -103,10 +113,7 @@ def _chunk_to_response(doc: ChunkDocument) -> ChunkResponse:
     )
 
 
-# ------------------------------------------------------------------ #
-# Routes — ingestion
-# ------------------------------------------------------------------ #
-
+#Creates: POST /repositories/github
 @router.post(
     "/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -114,23 +121,24 @@ def _chunk_to_response(doc: ChunkDocument) -> ChunkResponse:
     summary="Ingest a GitHub repository",
 )
 async def ingest_github_repo(
-    payload: GitHubIngestRequest,
-    background_tasks: BackgroundTasks,
-    service: IngestionService = Depends(IngestionService),
+    payload: GitHubIngestRequest, #GitHubIngestRequest --- Contains:{"github_url": "...","branch": "..."}
+    background_tasks: BackgroundTasks, #Without it: request blocks,User waits,Possible timeout
+    service: IngestionService = Depends(IngestionService), #FastAPI automatically creates service instance
     current_user: UserDocument = Depends(get_current_user),
 ) -> IngestStartedResponse:
     repo_doc = await service.create_github_repo_record(
         github_url=payload.github_url,
         branch=payload.branch,
         user_id=str(current_user.id),
+        overwrite=payload.overwrite,
     )
-    background_tasks.add_task(service.process_github_repo, str(repo_doc.id))
+    background_tasks.add_task(service.process_github_repo, str(repo_doc.id)) #Allows: Immediate response,Long-running ingestion
     return IngestStartedResponse(
         message="Repository ingestion started.",
         repo_id=str(repo_doc.id),
     )
 
-
+#ZIP upload ingestion
 @router.post(
     "/upload",
     status_code=status.HTTP_202_ACCEPTED,
@@ -140,28 +148,23 @@ async def ingest_github_repo(
 async def ingest_zip_repo(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    overwrite: bool = Query(False, description="Overwrite if exists"),
     service: IngestionService = Depends(IngestionService),
     current_user: UserDocument = Depends(get_current_user),
 ) -> IngestStartedResponse:
-    if not file.filename or not file.filename.endswith(".zip"):
+    if not file.filename or not file.filename.endswith(".zip"): #check if zip or not
         raise UploadError("Only .zip archives are accepted.")
 
-    # The file size is checked by the MaxUploadSizeMiddleware.
-    # We remove synchronous zip validation to prevent memory exhaustion and blocking HTTP response.
-    # Validation will happen in the background task.
-
-    repo_doc = await service.create_zip_repo_record(file, user_id=str(current_user.id))
+    #Validation moved to background task --- Avoid memory exhaustion
+    
+    repo_doc = await service.create_zip_repo_record(file, user_id=str(current_user.id), overwrite=overwrite)
     background_tasks.add_task(service.process_zip_repo, str(repo_doc.id))
     return IngestStartedResponse(
         message="ZIP repository ingestion started.",
         repo_id=str(repo_doc.id),
     )
 
-
-# ------------------------------------------------------------------ #
-# Routes — listing / detail
-# ------------------------------------------------------------------ #
-
+#GET /repositories --- Repository dashboard
 @router.get(
     "",
     response_model=List[RepoSummaryResponse],
@@ -184,7 +187,7 @@ async def list_repositories(
     docs = await query.sort("-created_at").to_list()
     return [_doc_to_summary(d) for d in docs]
 
-
+#GET /repositories/{repo_id} --- Detailed repository view
 @router.get(
     "/{repo_id}",
     response_model=RepoDetailResponse,
@@ -195,30 +198,36 @@ async def get_repository(
     current_user: UserDocument = Depends(get_current_user),
 ) -> RepoDetailResponse:
     doc = await RepositoryDocument.get(repo_id)
-    if doc is None or doc.user_id != str(current_user.id):
+    if doc is None or doc.user_id != str(current_user.id):  #Prevents: User A viewing User B repository
         raise NotFoundError(f"Repository '{repo_id}' not found.")
     return _doc_to_detail(doc)
 
-
-# ------------------------------------------------------------------ #
-# Routes — file / chunk inspection
-# ------------------------------------------------------------------ #
-
+#GET /repositories/{repo_id}/files --- Return parsed file metadata
 @router.get(
     "/{repo_id}/files",
     summary="List parsed file summaries for a repository",
 )
 async def list_repo_files(
     repo_id: str,
+    q: Optional[str] = Query(None, description="Prefix or partial path to filter files"),
+    limit: int = Query(50, ge=1, le=500),
     current_user: UserDocument = Depends(get_current_user),
 ):
     doc = await RepositoryDocument.get(repo_id)
     if doc is None or doc.user_id != str(current_user.id):
         raise NotFoundError(f"Repository '{repo_id}' not found.")
     files = (doc.repo_metadata or {}).get("files", [])
+    
+    if q:
+        q_lower = q.lower()
+        files = [f for f in files if q_lower in (f.get("file_path", "") if isinstance(f, dict) else f).lower()]
+        
+    # Return at most 'limit' results to keep autocomplete fast
+    files = files[:limit]
+    
     return {"repo_id": repo_id, "total": len(files), "files": files}
 
-
+#GET /repositories/{repo_id}/chunks --- Inspect chunk database --- Useful for: Debugging,Search verification,Chunk analysis
 @router.get(
     "/{repo_id}/chunks",
     response_model=List[ChunkResponse],
@@ -246,10 +255,7 @@ async def list_repo_chunks(
     return [_chunk_to_response(c) for c in chunks]
 
 
-# ------------------------------------------------------------------ #
-# Routes — deletion
-# ------------------------------------------------------------------ #
-
+#Verify repository integrity --- Checks: MongoDB record,FAISS index file,Metadata sidecar file
 @router.get(
     "/{repo_id}/health",
     summary="Check repository health (missing index, metadata, corruption)",
@@ -274,7 +280,7 @@ async def check_repo_health(
         
         # Check FAISS index
         store = FAISSStore(repo_id=repo_id, index_path=doc.faiss_index_path)
-        if not store.exists():
+        if not store.exists():  #Verifies: FAISS index still exists on disk
             health_status["is_healthy"] = False
             health_status["issues"].append("FAISS index file missing from disk.")
             
@@ -285,7 +291,34 @@ async def check_repo_health(
             
     return health_status
 
+#POST /repositories/{repo_id}/reindex --- Re-run indexing for an existing repo
+@router.post(
+    "/{repo_id}/reindex",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=IngestStartedResponse,
+    summary="Re-index an existing repository",
+)
+async def reindex_repository(
+    repo_id: str,
+    background_tasks: BackgroundTasks,
+    service: IngestionService = Depends(IngestionService),
+    current_user: UserDocument = Depends(get_current_user),
+) -> IngestStartedResponse:
+    doc = await RepositoryDocument.get(repo_id)
+    if doc is None or doc.user_id != str(current_user.id):
+        raise NotFoundError(f"Repository '{repo_id}' not found.")
+        
+    if doc.source == RepoSource.GITHUB:
+        background_tasks.add_task(service.process_github_repo, repo_id)
+    else:
+        background_tasks.add_task(service.process_zip_repo, repo_id)
+        
+    return IngestStartedResponse(
+        message="Repository re-indexing started.",
+        repo_id=repo_id,
+    )
 
+#DELETE /repositories/{repo_id} --- Remove repository completely
 @router.delete(
     "/{repo_id}",
     status_code=status.HTTP_200_OK,
@@ -301,3 +334,40 @@ async def delete_repository(
         raise NotFoundError(f"Repository '{repo_id}' not found.")
     await service.delete_repo(repo_id)
     return {"success": True, "message": f"Repository '{repo_id}' deleted."}
+
+class RenameRepoRequest(BaseModel):
+    new_name: str
+
+@router.patch(
+    "/{repo_id}/rename",
+    status_code=status.HTTP_200_OK,
+    summary="Rename an existing repository",
+)
+async def rename_repository(
+    repo_id: str,
+    payload: RenameRepoRequest,
+    current_user: UserDocument = Depends(get_current_user),
+):
+    if not payload.new_name or not payload.new_name.strip():
+        raise HTTPException(status_code=400, detail="Repository name cannot be empty.")
+    
+    new_name = payload.new_name.strip()
+    # Check duplicate
+    duplicate = await RepositoryDocument.find_one(
+        RepositoryDocument.user_id == str(current_user.id),
+        RepositoryDocument.name == new_name
+    )
+    if duplicate and str(duplicate.id) != repo_id:
+        raise HTTPException(status_code=400, detail=f"Repository '{new_name}' already exists.")
+
+    doc = await RepositoryDocument.get(repo_id)
+    if doc is None or doc.user_id != str(current_user.id):
+        raise NotFoundError(f"Repository '{repo_id}' not found.")
+
+    doc.name = new_name
+    from datetime import datetime
+    doc.updated_at = datetime.utcnow()
+    await doc.save()
+    
+    # Invalidate caching if necessary, or let frontend handle it
+    return {"success": True, "message": "Repository renamed.", "repo_id": repo_id, "new_name": new_name}

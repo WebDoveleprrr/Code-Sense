@@ -4,6 +4,8 @@ import { Zap, Loader2, FileCode2, Play, GitMerge, AlertTriangle, ArrowRight, Lay
 import { explainApi } from "../services/api"; //bridge to backend
 import { useRepository } from "../hooks/useRepositories";
 import RepoSelector from "../components/ui/RepoSelector"; //choose repository context
+import ReactMarkdown from "react-markdown";
+import CodeBlock from "../components/ui/CodeBlock";
 import toast from "react-hot-toast";
 
 export default function ExplainCode() {
@@ -15,21 +17,39 @@ export default function ExplainCode() {
   const [loading, setLoading] = useState(false);
   const [explanation, setExplanation] = useState(null); //Stores AI result(initially null)
   const [activeTab, setActiveTab] = useState("summary"); // summary, detailed, complexity
+  const [validationError, setValidationError] = useState("");
+  const abortControllerRef = React.useRef(null);
   
   const isRepoReady = repo ? repo.status === "ready" : false; //Prevent explanation before indexing
+
+  // Cancel any pending request if component unmounts
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   //main function(send code to backend and receive explanation)
   const handleExplain = async () => {
     if (!code.trim() || !repoId || !isRepoReady) return; //Prevent invalid requests.
     
+    // Cancel previous request if still running
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     setLoading(true);
     setExplanation(null); //clear old explanation
+    setValidationError("");
     
     try { //actual backend call
       const res = await explainApi.explain({
         repo_id: repoId,
         code: code.trim(),
-      });
+      }, { signal: abortControllerRef.current.signal });
       const formatArray = (arr) => Array.isArray(arr) && arr.length > 0 ? arr.join(", ") : "None";
       const data = res.explanation || {};
       
@@ -40,11 +60,22 @@ export default function ExplainCode() {
         purpose: data.purpose || "Not specified.",
         inputs: formatArray(data.inputs),
         outputs: formatArray(data.outputs),
+        side_effects: formatArray(data.side_effects),
         dependencies: formatArray(data.dependencies),
-        improvements: formatArray(data.improvements)
+        callers: formatArray(data.callers),
+        callees: formatArray(data.callees),
+        improvements: formatArray(data.improvements),
+        language: res.language || "Unknown",
       });
     } catch (err) {
-      toast.error(err.message || "Failed to explain code");
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') {
+        return; // Silently ignore cancellations
+      }
+      if (err.message && (err.message.includes("400") || err.message.toLowerCase().includes("validation"))) {
+        setValidationError("Input does not appear to be valid source code. Please paste valid code and try again.");
+      } else {
+        toast.error(err.message || "Failed to explain code");
+      }
     } finally {
       setLoading(false);
     }
@@ -116,28 +147,60 @@ export default function ExplainCode() {
             <Loader2 size={40} className="text-indigo-500 animate-spin mb-4" />
             <p className="text-slate-400">Processing analysis...</p>
           </div>
+        ) : validationError ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center animate-fade-in">
+            <div className="w-20 h-20 bg-rose-500/10 border border-rose-500/20 rounded-3xl flex items-center justify-center mb-6 shadow-glass">
+              <AlertTriangle size={32} className="text-rose-500" />
+            </div>
+            <h3 className="text-2xl font-bold text-slate-50 mb-3">Invalid Input</h3>
+            <p className="text-slate-400 max-w-sm mb-6">
+              {validationError}
+            </p>
+          </div>
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden animate-fade-in">
             
-            {/* Tabs */}
-            <div className="flex items-center gap-2 px-6 pt-6 border-b border-slate-800 shrink-0">
-              {[
-                { id: "summary", label: "Summary", icon: Layers },
-                { id: "detailed", label: "Detailed Explanation", icon: FileCode2 },
-                { id: "complexity", label: "Complexity Analysis", icon: Zap }
-              ].map(t => (
+            {/* Tabs & Language Badge */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between px-6 pt-6 border-b border-slate-800 shrink-0 gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { id: "summary", label: "Summary", icon: Layers },
+                  { id: "detailed", label: "Detailed", icon: FileCode2 },
+                  { id: "complexity", label: "Complexity", icon: Zap }
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id)}
+                    className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 -mb-[1px] ${
+                      activeTab === t.id 
+                        ? "border-indigo-500 text-indigo-400" 
+                        : "border-transparent text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <t.icon size={16} /> {t.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pb-3 shrink-0">
                 <button
-                  key={t.id}
-                  onClick={() => setActiveTab(t.id)}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
-                    activeTab === t.id 
-                      ? "border-indigo-500 text-indigo-400" 
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
+                  onClick={() => {
+                    const textToCopy = `Language: ${explanation.language || 'Unknown'}\n\nSummary:\n${explanation.summary}\n\nDetailed:\n${explanation.detailed}`;
+                    navigator.clipboard.writeText(textToCopy);
+                    toast.success("Explanation copied to clipboard!");
+                  }}
+                  className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-md border border-slate-700 transition-colors"
                 >
-                  <t.icon size={16} /> {t.label}
+                  Copy Explanation
                 </button>
-              ))}
+                {explanation.language && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Detected Language:</span>
+                    <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-sm flex items-center gap-1">
+                      {explanation.language}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700">
@@ -146,17 +209,56 @@ export default function ExplainCode() {
               <div className="mb-8">
                 {activeTab === 'summary' && (
                   <div className="prose prose-invert prose-sm max-w-none text-slate-300">
-                    <p className="text-base leading-relaxed">{explanation.summary}</p>
+                    <ReactMarkdown
+                      components={{
+                        code({node, inline, className, children, ...props}) {
+                          const match = /language-(\w+)/.exec(className || '')
+                          return !inline ? (
+                            <CodeBlock language={match ? match[1] : ''} value={String(children).replace(/\n$/, '')} />
+                          ) : (
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          )
+                        }
+                      }}
+                    >
+                      {explanation.summary}
+                    </ReactMarkdown>
                   </div>
                 )}
                 {activeTab === 'detailed' && (
                   <div className="prose prose-invert prose-sm max-w-none text-slate-300">
-                    <p className="text-base leading-relaxed">{explanation.detailed}</p>
+                    <ReactMarkdown
+                      components={{
+                        code({node, inline, className, children, ...props}) {
+                          const match = /language-(\w+)/.exec(className || '')
+                          return !inline ? (
+                            <CodeBlock language={match ? match[1] : ''} value={String(children).replace(/\n$/, '')} />
+                          ) : (
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          )
+                        }
+                      }}
+                    >
+                      {explanation.detailed}
+                    </ReactMarkdown>
                   </div>
                 )}
                 {activeTab === 'complexity' && (
-                  <div className="prose prose-invert prose-sm max-w-none text-slate-300">
-                    <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800">{explanation.complexity}</pre>
+                  <div className="flex flex-wrap gap-4">
+                    {explanation.complexity.split('\n').map((comp, idx) => {
+                      const [label, ...rest] = comp.split(':');
+                      const value = rest.join(':').trim();
+                      return (
+                        <div key={idx} className="flex-1 min-w-[200px] p-4 rounded-xl bg-slate-950 border border-slate-800 shadow-glass flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label || "Metric"}</span>
+                          <span className="text-lg font-mono text-indigo-400">{value || comp}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -166,7 +268,10 @@ export default function ExplainCode() {
                 <InfoCard icon={Play} title="Purpose" content={explanation.purpose} />
                 <InfoCard icon={ArrowRight} title="Inputs" content={explanation.inputs} />
                 <InfoCard icon={ArrowRight} title="Outputs" content={explanation.outputs} />
+                <InfoCard icon={AlertTriangle} title="Side Effects" content={explanation.side_effects} />
                 <InfoCard icon={GitMerge} title="Dependencies" content={explanation.dependencies} />
+                <InfoCard icon={Layers} title="Callers (Inbound)" content={explanation.callers} />
+                <InfoCard icon={Layers} title="Callees (Outbound)" content={explanation.callees} />
                 <InfoCard icon={AlertTriangle} title="Potential Improvements" content={explanation.improvements} className="sm:col-span-2 bg-indigo-500/5 border-indigo-500/20" />
               </div>
               

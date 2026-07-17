@@ -182,7 +182,7 @@ async def token_expired_exception_handler(
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach all exception handlers to the FastAPI application."""
-    from app.ml.llm_client import LLMUnavailableError
+    from app.db.ml.llm_client import LLMUnavailableError
     from app.core.auth import TokenExpiredError
     app.add_exception_handler(TokenExpiredError, token_expired_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(LLMUnavailableError, llm_unavailable_exception_handler)  # type: ignore[arg-type]

@@ -24,7 +24,7 @@ from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
 from app.models.repository import RepositoryDocument
 from app.models.search_log import QueryType, SearchLogDocument
-from app.ml.rag import generate_architecture_summary
+from app.db.ml.rag import generate_architecture_summary
 
 
 # Architecture seed queries used to pull representative code samples
@@ -104,8 +104,9 @@ class ArchitectureService:
                 code_samples=code_samples,
                 provider=provider,
             )
+            summary_text = _sanitize_mermaid(summary_text)
         except Exception as exc:
-            from app.ml.llm_client import LLMUnavailableError
+            from app.db.ml.llm_client import LLMUnavailableError
             if isinstance(exc, LLMUnavailableError):
                 raise
             logger.warning("LLM failure for architecture, falling back: {err}", err=str(exc))
@@ -208,6 +209,220 @@ def _fallback_architecture(
         "",
         "### High-Level Structure"
     ]
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+
+from app_logger import logger
+
+from app.core.config import get_settings
+from app.core.exceptions import NotFoundError
+from app.models.repository import RepositoryDocument
+from app.models.search_log import QueryType, SearchLogDocument
+from app.db.ml.rag import generate_architecture_summary
+
+
+# Architecture seed queries used to pull representative code samples
+ARCHITECTURE_SEED_QUERIES = [
+    "application entry point main function",
+    "configuration settings environment variables",
+    "database connection models schema",
+    "API routes endpoints handlers",
+    "service layer business logic",
+]
+
+
+class ArchitectureService:
+    """
+    Generates AI-powered architecture summaries.
+    Stateless — instantiated per request via FastAPI Depends().
+    """
+
+    async def summarise(
+        self,
+        repo_id: str,
+        *,
+        provider: Optional[str] = None,
+        force_regenerate: bool = False,
+    ) -> dict:
+        """
+        Generate a comprehensive architecture summary for a repository.
+
+        Args:
+            repo_id:  Target repository ID.
+            provider: LLM provider override.
+
+        Returns:
+            dict matching the ArchitectureSummaryResponse schema.
+        """
+        t0 = time.perf_counter()
+
+        # ---------------------------------------------------------------- #
+        # Load repo
+        # ---------------------------------------------------------------- #
+        repo = await RepositoryDocument.get(repo_id)
+        if repo is None:
+            raise NotFoundError(f"Repository '{repo_id}' not found.")
+
+        # ---------------------------------------------------------------- #
+        # Structural metrics from stored metadata
+        # ---------------------------------------------------------------- #
+        raw_meta = repo.repo_metadata or {}
+        total_functions = raw_meta.get("total_functions", 0)
+        total_classes = raw_meta.get("total_classes", 0)
+        total_lines = raw_meta.get("total_lines", 0)
+        file_list = [f.get("file_path", "") for f in raw_meta.get("files", [])]
+
+        # ---------------------------------------------------------------- #
+        # Static analysis (entry points, key components)
+        # ---------------------------------------------------------------- #
+        entry_points, key_components = _extract_structural_info(repo)
+
+        # ---------------------------------------------------------------- #
+        # RAG: retrieve code samples from representative areas
+        # ---------------------------------------------------------------- #
+        code_samples = await _retrieve_code_samples(repo_id=repo_id, repo_updated_at=str(repo.updated_at))
+
+        # ---------------------------------------------------------------- #
+        # LLM-backed architecture summary
+        # ---------------------------------------------------------------- #
+        is_fallback = False
+        try:
+            summary_text = await generate_architecture_summary(
+                repo_name=repo.name,
+                language_breakdown=repo.language_breakdown,
+                total_files=repo.total_files,
+                total_functions=total_functions,
+                total_classes=total_classes,
+                entry_points=entry_points,
+                key_components=key_components,
+                sample_files=file_list,
+                code_samples=code_samples[0] if isinstance(code_samples, tuple) else code_samples,
+                provider=provider,
+            )
+            summary_text = _sanitize_mermaid(summary_text)
+        except Exception as exc:
+            from app.db.ml.llm_client import LLMUnavailableError
+            if isinstance(exc, LLMUnavailableError):
+                raise
+            logger.warning("LLM failure for architecture, falling back: {err}", err=str(exc))
+            summary_text = _fallback_architecture(repo.name, repo.language_breakdown, entry_points, key_components)
+            is_fallback = True
+
+        elapsed_ms = (time.perf_counter() - t0) * 1_000
+
+        # ---------------------------------------------------------------- #
+        # Audit log
+        # ---------------------------------------------------------------- #
+        import asyncio
+
+        asyncio.create_task(
+            _write_arch_log(
+                repo_id=repo_id,
+                latency_ms=elapsed_ms,
+            )
+        )
+
+        logger.info(
+            "Architecture summary generated | Repo: {id} | "
+            "Graph Nodes (Total Files): {files} | "
+            "Generation Duration: {ms:.1f}ms",
+            id=repo_id,
+            files=repo.total_files,
+            ms=elapsed_ms,
+        )
+
+        # Compute Architecture Confidence
+        num_chunks = code_samples[1] if isinstance(code_samples, tuple) else 0
+        num_files = code_samples[2] if isinstance(code_samples, tuple) else 0
+        
+        confidence = "Low"
+        if num_files >= 10 and num_chunks >= 30:
+            confidence = "High"
+        elif num_files >= 3 or num_chunks >= 10:
+            confidence = "Medium"
+
+        return {
+            "success": True,
+            "repo_name": repo.name,
+            "summary": summary_text,
+            "language_breakdown": repo.language_breakdown,
+            "metrics": {
+                "total_files": repo.total_files,
+                "total_functions": total_functions,
+                "total_classes": total_classes,
+                "total_lines": total_lines,
+                "total_imports": raw_meta.get("total_imports", 0),
+                "total_chunks": getattr(repo, "total_chunks", 0),
+            },
+            "grounding": {
+                "chunks_retrieved": num_chunks,
+                "files_retrieved": num_files,
+                "confidence": confidence,
+            },
+            "entry_points": entry_points,
+            "key_modules": key_components,
+            "patterns": [],
+            "external_deps": [],
+            "recommendations": [],
+            "latency_ms": round(elapsed_ms, 2),
+            "is_fallback": is_fallback,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+ENTRY_NAMES = {
+    "main.py", "app.py", "server.py", "index.js", "index.ts",
+    "main.go", "main.rs", "Program.cs", "app.js", "app.ts",
+    "__main__.py",
+}
+
+CONFIG_NAMES = {
+    "pyproject.toml", "setup.py", "setup.cfg",
+    "package.json", "Cargo.toml", "go.mod", "pom.xml",
+    "requirements.txt", "Pipfile", "poetry.lock",
+    "docker-compose.yml", "Dockerfile", ".env.example",
+}
+
+
+def _extract_structural_info(repo: RepositoryDocument):
+    """
+    Walk the stored file list to identify entry points and config files.
+    Returns (entry_points, key_components).
+    """
+    raw_meta = repo.repo_metadata or {}
+    files = [f.get("file_path", "") for f in raw_meta.get("files", [])]
+
+    entry_points: List[str] = []
+    key_components: List[str] = []
+
+    for fp in files:
+        name = Path(fp).name
+        if name in ENTRY_NAMES:
+            entry_points.append(fp)
+        if name in CONFIG_NAMES:
+            key_components.append(name)
+
+    return entry_points[:5], list(set(key_components))[:10]
+
+
+def _fallback_architecture(
+    repo_name: str,
+    language_breakdown: Dict[str, Any],
+    entry_points: List[str],
+    key_components: List[str]
+) -> str:
+    """Generate a heuristic architecture summary when LLM is unavailable."""
+    lines = [
+        f"**Local Structural Analysis Mode** for `{repo_name}`",
+        "",
+        "The AI provider is currently unavailable. This is an extractive architecture summary based on static heuristics.",
+        "",
+        "### High-Level Structure"
+    ]
     
     if language_breakdown:
         top_langs = sorted(language_breakdown.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -225,14 +440,22 @@ def _fallback_architecture(
     return "\n".join(lines)
 
 
-async def _retrieve_code_samples(repo_id: str, max_chars: int = 3_000) -> Optional[str]:
+# Global cache for architecture code samples to drastically reduce retrieval latency on subsequent requests
+_architecture_retrieval_cache: Dict[str, tuple] = {}
+
+async def _retrieve_code_samples(repo_id: str, repo_updated_at: str, max_chars: int = 3_000) -> tuple[Optional[str], int, int]:
     """
     Use semantic search to pull representative code samples across several
-    architectural seed queries. Returns a compact formatted context string.
+    architectural seed queries. Returns a tuple (context_string, num_chunks, num_files).
+    Caches the result tied to repo_id and repo.updated_at to improve performance.
     """
+    cache_key = f"{repo_id}_{repo_updated_at}"
+    if cache_key in _architecture_retrieval_cache:
+        return _architecture_retrieval_cache[cache_key]
+
     try:
         from app.services.retrieval_service import RetrievalService
-        from app.ml.prompt_templates import format_retrieved_context
+        from app.db.ml.prompt_templates import format_retrieved_context
 
         svc = RetrievalService()
         all_chunks: List[Dict[str, Any]] = []
@@ -242,8 +465,8 @@ async def _retrieve_code_samples(repo_id: str, max_chars: int = 3_000) -> Option
             result = await svc.retrieve(
                 repo_id=repo_id,
                 query=seed,
-                top_k=2,
-                use_metadata_cache=False,
+                top_k=3,
+                use_metadata_cache=True, 
             )
             for chunk in result.get("results", []):
                 fp = chunk.get("file_path", "")
@@ -252,13 +475,20 @@ async def _retrieve_code_samples(repo_id: str, max_chars: int = 3_000) -> Option
                     seen_files.add(fp)
 
         if not all_chunks:
-            return None
+            return None, 0, 0
 
-        return format_retrieved_context(all_chunks, max_chars=max_chars)
+        res = format_retrieved_context(all_chunks, max_chars=max_chars), len(all_chunks), len(seen_files)
+        
+        # Keep cache small to avoid memory leak
+        if len(_architecture_retrieval_cache) > 10:
+            _architecture_retrieval_cache.pop(next(iter(_architecture_retrieval_cache)))
+        _architecture_retrieval_cache[cache_key] = res
+        
+        return res
 
     except Exception as exc:
         logger.warning("Architecture code sample retrieval failed: {err}", err=str(exc))
-        return None
+        return None, 0, 0
 
 
 def _lang_to_ext(lang: str) -> str:
@@ -283,3 +513,9 @@ async def _write_arch_log(repo_id: str, latency_ms: float) -> None:
         ).insert()
     except Exception as exc:
         logger.warning("Architecture audit log write failed: {err}", err=str(exc))
+
+
+import re
+
+def _sanitize_mermaid(text: str) -> str:
+    return text

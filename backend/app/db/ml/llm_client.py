@@ -235,26 +235,31 @@ async def complete(
     last_error = None
 
     for current_provider in providers_to_try:
-        try:
-            if current_provider == "gemini":
-                return await _call_gemini(system_prompt, user_prompt)
-            elif current_provider == "openai":
-                return await _call_openai(system_prompt, user_prompt)
-            elif current_provider == "anthropic":
-                return await _call_anthropic(system_prompt, user_prompt)
-            elif current_provider == "ollama":
-                return await _call_ollama(system_prompt, user_prompt)
-            elif current_provider == "local":
-                # Graceful degradation at the very end of the chain
-                return f"Extractive Preview: LLM capabilities are currently degraded (Fallback mode active). Cannot generate deep insights."
-        except (RuntimeError, ImportError, LLMUnavailableError) as exc:
-            last_error = exc
-            logger.warning("Provider {provider} failed: {err}. Attempting fallback.", provider=current_provider, err=str(exc))
-            continue
-        except Exception as exc:
-            last_error = exc
-            logger.error("Provider {provider} threw unexpected error: {err}. Attempting fallback.", provider=current_provider, err=str(exc))
-            continue
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                if current_provider == "gemini":
+                    return await _call_gemini(system_prompt, user_prompt)
+                elif current_provider == "openai":
+                    return await _call_openai(system_prompt, user_prompt)
+                elif current_provider == "anthropic":
+                    return await _call_anthropic(system_prompt, user_prompt)
+                elif current_provider == "ollama":
+                    return await _call_ollama(system_prompt, user_prompt)
+                elif current_provider == "local":
+                    # Graceful degradation at the very end of the chain
+                    return f"Extractive Preview: LLM capabilities are currently degraded (Fallback mode active). Cannot generate deep insights."
+            except (RuntimeError, ImportError, LLMUnavailableError) as exc:
+                last_error = exc
+                logger.warning("Provider {provider} failed (attempt {attempt}): {err}. Attempting fallback.", provider=current_provider, attempt=attempt+1, err=str(exc))
+                break # Break inner retry loop for permanent errors
+            except Exception as exc:
+                last_error = exc
+                logger.error("Provider {provider} threw unexpected error (attempt {attempt}): {err}.", provider=current_provider, attempt=attempt+1, err=str(exc))
+                if attempt == max_retries - 1:
+                    logger.warning("Provider {provider} exhausted retries. Attempting fallback.", provider=current_provider)
+                import asyncio
+                await asyncio.sleep(1) # Basic backoff before retry
 
     if last_error:
         logger.error("All LLM providers failed. Last error: {err}", err=str(last_error))
@@ -272,77 +277,77 @@ def normalize_model_name(name: str) -> str:
 
 async def validate_startup() -> None:
     """Validate that at least one LLM provider is available."""
-    # FUNCTION PURPOSE:
-    # Runs during the FastAPI startup lifecycle (`main.py`) to verify API keys
-    # or ping the local Ollama instance. If nothing is available, it warns the user
-    # immediately rather than waiting for them to type a RAG query.
     settings = get_settings()
     enable_llm = os.getenv("ENABLE_LLM", str(settings.ENABLE_LLM)).lower() == "true"
     if not enable_llm:
         logger.info("LLM features are disabled (ENABLE_LLM=false).")
         return
 
-    # Check providers in order of fallback
-    
-    # 1. Gemini
-    gemini_key = os.getenv("GEMINI_API_KEY", getattr(settings, "GEMINI_API_KEY", ""))
-    if gemini_key:
-        logger.info("Gemini provider active (Configured via GEMINI_API_KEY)")
-        return
-        
-    # 2. OpenAI
-    openai_key = os.getenv("OPENAI_API_KEY", settings.OPENAI_API_KEY)
-    if openai_key:
-        logger.info("OpenAI provider active (Configured via OPENAI_API_KEY)")
-        return
-        
-    # 3. Anthropic
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if anthropic_key:
-        logger.info("Anthropic provider active (Configured via ANTHROPIC_API_KEY)")
-        return
+    provider = get_provider()
+    logger.info(f"Validating startup for provider: {provider}")
 
-    # 4. Ollama (Only check if no cloud providers are configured)
-    base_url = os.getenv("OLLAMA_BASE_URL", settings.OLLAMA_BASE_URL).rstrip("/")
-    model = os.getenv("OLLAMA_MODEL", settings.OLLAMA_MODEL)
-    logger.info("Validating Ollama connection at {base_url} ...", base_url=base_url)
-    client = _get_client()
-    response_status = None
-    available_models = []
-    try:
-        response = await client.get(f"{base_url}/api/tags", timeout=5.0)
-        response_status = response.status_code
-        if response.status_code != 200:
-            raise LLMUnavailableError(f"Ollama returned status code {response.status_code}")
-        
-        data = response.json()
-        available_models = [m.get("name") for m in data.get("models", [])]
-        
-        target_norm = normalize_model_name(model)
-        model_loaded = False
-        for m in available_models:
-            if normalize_model_name(m) == target_norm:
-                model_loaded = True
-                break
-        
-        if not model_loaded:
-            logger.warning(
-                "LLM Startup Health-Check Failed for Ollama:\n"
-                "  Base URL: {base_url}\n"
-                "  Configured Model: {model}\n"
-                "  Available Models: {available}\n"
-                "  Response Status: {status}",
-                base_url=base_url,
-                model=model,
-                available=available_models,
-                status=response_status
-            )
-        else:
-            logger.info("Ollama provider active")
-            logger.info("Model loaded: {model}", model=model)
+    if provider == "gemini":
+        gemini_key = os.getenv("GEMINI_API_KEY", getattr(settings, "GEMINI_API_KEY", ""))
+        if gemini_key:
+            logger.info("Gemini provider active")
             return
-    except Exception as exc:
-        logger.warning(f"Ollama connection validation failed: {exc}")
+        logger.warning("Gemini provider selected but GEMINI_API_KEY is missing.")
 
+    elif provider == "openai":
+        openai_key = os.getenv("OPENAI_API_KEY", settings.OPENAI_API_KEY)
+        if openai_key:
+            logger.info("OpenAI provider active")
+            return
+        logger.warning("OpenAI provider selected but OPENAI_API_KEY is missing.")
+
+    elif provider == "anthropic":
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if anthropic_key:
+            logger.info("Anthropic provider active")
+            return
+        logger.warning("Anthropic provider selected but ANTHROPIC_API_KEY is missing.")
+
+    elif provider == "ollama":
+        base_url = os.getenv("OLLAMA_BASE_URL", settings.OLLAMA_BASE_URL).rstrip("/")
+        model = os.getenv("OLLAMA_MODEL", settings.OLLAMA_MODEL)
+        logger.info("Validating Ollama connection at {base_url} ...", base_url=base_url)
+        client = _get_client()
+        response_status = None
+        available_models = []
+        try:
+            response = await client.get(f"{base_url}/api/tags", timeout=5.0)
+            response_status = response.status_code
+            if response.status_code != 200:
+                raise LLMUnavailableError(f"Ollama returned status code {response.status_code}")
+            
+            data = response.json()
+            available_models = [m.get("name") for m in data.get("models", [])]
+            
+            target_norm = normalize_model_name(model)
+            model_loaded = False
+            for m in available_models:
+                if normalize_model_name(m) == target_norm:
+                    model_loaded = True
+                    break
+            
+            if not model_loaded:
+                logger.warning(
+                    "LLM Startup Health-Check Failed for Ollama:\n"
+                    "  Base URL: {base_url}\n"
+                    "  Configured Model: {model}\n"
+                    "  Available Models: {available}\n"
+                    "  Response Status: {status}",
+                    base_url=base_url,
+                    model=model,
+                    available=available_models,
+                    status=response_status
+                )
+            else:
+                logger.info("Ollama provider active")
+                logger.info("Model loaded: {model}", model=model)
+                return
+        except Exception as exc:
+            logger.warning(f"Ollama connection validation failed: {exc}")
+            
     # If we got here, no provider is fully validated
-    logger.warning("No LLM provider could be validated. Features will fall back gracefully to 'local' stub mode.")
+    logger.warning(f"Failed to validate LLM provider '{provider}'. Features will fall back gracefully to 'local' stub mode.")

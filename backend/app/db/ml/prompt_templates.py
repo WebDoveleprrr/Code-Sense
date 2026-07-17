@@ -42,8 +42,11 @@ The JSON object must match this exact structure:
 "complexity":"Estimate the Time Complexity (Big O) and Space Complexity (Big O) with brief justifications.",
 "purpose":"The main goal or role of this code.",
 "inputs":["List of inputs, parameters, or data sources"],
-"outputs":["List of outputs, return values, or side effects"],
+"outputs":["List of outputs or return values"],
+"side_effects":["List of state changes, file I/O, network requests, or global variable mutations"],
 "dependencies":["List of standard library or internal modules used"],
+"callers":["Components, methods, or functions that call this code (if evident or likely)"],
+"callees":["Functions, methods, or services called by this code"],
 "improvements":["Actionable recommendations, refactoring opportunities, or optimizations"]
 }
 """
@@ -53,17 +56,22 @@ The JSON object must match this exact structure:
 # Q&A / RAG prompt
 # ---------------------------------------------------------------------------
 
-def build_qa_prompt(question: str, context: str) -> str:
+def build_qa_prompt(question: str, context: str, strict_mode: bool = False) -> str:
     """
     Build the user-turn message for a repository Q&A RAG call.
 
     Args:
         question: The developer's natural-language question.
         context:  Pre-formatted retrieval context (file headers + code blocks).
+        strict_mode: If True, adds strong hallucination prevention instructions.
 
     Returns:
         A single user-turn string to send alongside SYSTEM_PROMPT_QA.
     """
+    strict_instruction = ""
+    if strict_mode:
+        strict_instruction = "\nSTRICT MODE ENABLED: Do not use outside knowledge. If the exact answer is not in the context, explicitly state 'I don't know based on the provided context.' Do not guess or infer."
+
     return f"""\
 ## Repository Code Context
 
@@ -75,7 +83,7 @@ def build_qa_prompt(question: str, context: str) -> str:
 
 {question}
 
-Please answer using only the code context above.
+Please answer using only the code context above.{strict_instruction}
 """
 
 
@@ -121,6 +129,10 @@ def build_explanation_prompt(
         if comments:
             metadata_parts.append(f"- **Extracted Comments:** {'; '.join(comments[:5])}")
             
+        cross_context = metadata.get("cross_file_context")
+        if cross_context:
+            metadata_parts.append(f"\n### Cross-File Repository Context (Callers/Callees):\n{cross_context}")
+            
         if metadata_parts:
             metadata_context = "### Tree-Sitter Extracted File Context:\n" + "\n".join(metadata_parts) + "\n\n"
 
@@ -136,52 +148,47 @@ SYSTEM_PROMPT_ARCHITECTURE = """\
 You are CodeSense, a principal software architect.
 Your task is to analyze the repository structure, entry points, key components, and sample code to generate a professional architecture summary.
 
-Your analysis MUST cover the following key areas:
-### 1. Architectural Style & Design
-- Describe the overall pattern (e.g. layered, MVC, microservices, modular monolith) and design philosophy.
+STRICT RULES (EVIDENCE FIRST):
+- Never invent or hallucinate modules, files, dependencies, design patterns, or data flows.
+- You must ONLY use the information provided in the retrieved context.
+- If evidence is insufficient for any section, explicitly state: "Not enough evidence found."
+- Every architectural statement must trace back to retrieved files.
 
-### 2. Core Components & Directory Mapping
-- Explain the key directories, modules, and their respective responsibilities.
+Your analysis MUST be formatted in markdown and MUST contain exactly these 8 sections:
 
-### 3. Technical Stack & Key Dependencies
-- Document the language, frameworks, and prominent libraries or external dependencies used.
+### 1. Overview
+Describe the overall purpose, repository type, and high-level organization based ONLY on the retrieved code.
+Include a Mermaid.js flowchart (using ```mermaid ... ``` code blocks) visualizing the core system architecture, data flows, and dependencies. 
+CRITICAL MERMAID RULES:
+- Do NOT use file paths or special characters (like slashes, dots, or dashes) in Mermaid node IDs.
+- Use clean alphanumeric IDs (e.g., NodeA, AppMain).
+- Place the actual name or path inside brackets (e.g., AppMain["app/main.py"]).
+If you do not have enough evidence for a meaningful diagram, state "Not enough evidence to construct a diagram."
 
-### 4. Principal Data Flows
-- Detail how data flows through the application (e.g. entry points -> controllers -> services -> database).
+### 2. Directory Structure
+Summarize major folders and their responsibilities using actual repository paths found in the context.
 
-### 5. Architectural Patterns & Recommendations
-- Highlight notable design patterns implemented (e.g. singletons, factories, dependency injection) and suggest structural improvements.
+### 3. Core Components
+Describe services, controllers, models, utilities, API, database, etc. Only include components actually found in the context.
+
+### 4. Dependency Relationships
+Explain who imports whom, major dependency chains, shared utilities, and high coupling modules.
+
+### 5. Data Flow
+Describe request, processing, database, and response flows ONLY if supported by code.
+
+### 6. Design Patterns
+Only mention Factory, Repository, MVC, Service Layer, Dependency Injection, etc. if actual evidence exists in the context. Otherwise explicitly state "No recognizable architectural pattern detected."
+
+### 7. Recommendations
+Every recommendation must reference actual files, actual code, and actual architectural issues found in the context. No generic advice. Explain *why this matters* before *how to fix it*.
+
+### 8. Sources
+List the retrieved files that provided evidence for this analysis. Every architectural statement should trace back to these retrieved files.
 """
 
 
-# ---------------------------------------------------------------------------
-# Q&A / RAG prompt
-# ---------------------------------------------------------------------------
 
-def build_qa_prompt(question: str, context: str) -> str:
-    """
-    Build the user-turn message for a repository Q&A RAG call.
-
-    Args:
-        question: The developer's natural-language question.
-        context:  Pre-formatted retrieval context (file headers + code blocks).
-
-    Returns:
-        A single user-turn string to send alongside SYSTEM_PROMPT_QA.
-    """
-    return f"""\
-## Repository Code Context
-
-{context}
-
----
-
-## Question
-
-{question}
-
-Please answer using only the code context above.
-"""
 
 
 # Deleted duplicate build_explanation_prompt
@@ -237,11 +244,14 @@ def build_architecture_prompt(
 ---
 
 Please provide a structured architecture summary for this repository covering exactly:
-### 1. Architectural Style & Design
-### 2. Core Components & Directory Mapping
-### 3. Technical Stack & Key Dependencies
-### 4. Principal Data Flows
-### 5. Architectural Patterns & Recommendations
+### 1. Overview
+### 2. Directory Structure
+### 3. Core Components
+### 4. Dependency Relationships
+### 5. Data Flow
+### 6. Design Patterns
+### 7. Recommendations
+### 8. Sources
 """
 
 

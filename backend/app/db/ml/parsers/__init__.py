@@ -5,10 +5,10 @@ CodeSense — Parser Orchestrator
 import os
 from typing import Any, Dict
 
-from app.ml.parsers.python_parser import parse_python
-from app.ml.parsers.js_ts_parser import parse_js_ts
-from app.ml.parsers.cpp_parser import parse_cpp
-from app.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
+from app.db.ml.parsers.python_parser import parse_python
+from app.db.ml.parsers.js_ts_parser import parse_js_ts
+from app.db.ml.parsers.cpp_parser import parse_cpp
+from app.db.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
 from app_logger import logger
 
 def parse_source(file_dict: Dict[str, Any]) -> Dict[str, Any]:

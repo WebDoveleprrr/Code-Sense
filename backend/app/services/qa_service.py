@@ -23,8 +23,8 @@ from app.core.exceptions import NotFoundError, RAGError
 from app.models.repository import RepositoryDocument, RepoStatus
 from app.models.search_log import QueryType, SearchLogDocument
 from app.services.retrieval_service import RetrievalService
-from app.ml.context_ranker import apply_ranking
-from app.ml.rag import build_rag_context, generate_answer
+from app.db.ml.context_ranker import apply_ranking
+from app.db.ml.rag import build_rag_context, generate_answer
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ DEFAULT_MIN_SCORE: float = 0.10
 
 async def expand_query(question: str, provider: Optional[str] = None) -> str:
     """Expand the user query using LLM for better retrieval recall."""
-    from app.ml.llm_client import complete
+    from app.db.ml.llm_client import complete
     system_prompt = (
         "You are a search query expansion assistant for codebase search. "
         "Generate 3-4 alternative search terms, synonyms, functions, or concepts "
@@ -73,6 +73,7 @@ class QAService:
         use_cross_encoder: bool = True,
         language_filter: Optional[str] = None,
         provider: Optional[str] = None,
+        strict_mode: bool = False,
     ) -> dict:
         """
         Execute the full RAG pipeline and return a response dict.
@@ -86,11 +87,13 @@ class QAService:
             use_cross_encoder: Whether to apply cross-encoder re-ranking.
             language_filter:   Optionally restrict context to one language.
             provider:          LLM provider override ("openai" | "anthropic").
+            strict_mode:       If True, prevent LLM hallucination when context is missing.
 
         Returns:
             dict matching the QAResponse schema.
         """
         t0 = time.perf_counter()
+        logger.info("[QA] Request received for repo {id} - query: '{q}'", id=repo_id, q=question)
 
         # ---------------------------------------------------------------- #
         # Guard: repo must exist and be READY
@@ -108,51 +111,56 @@ class QAService:
         # Step 0: Query expansion
         # ---------------------------------------------------------------- #
         expanded_query = await expand_query(question, provider=provider)
-        logger.info("[QA] Expanded query from '{q}' to '{eq}'", q=question, eq=expanded_query)
+        t_expansion = time.perf_counter()
+        logger.info("[QA] Query expansion time: {ms:.1f}ms (Expanded: '{eq}')", ms=(t_expansion - t0) * 1000, eq=expanded_query)
 
         # ---------------------------------------------------------------- #
-        # Step 1: Semantic retrieval (fetch extra candidates for re-ranking)
+        # Step 1: Semantic retrieval
+        # (retrieval_service handles internal over-fetching and cross-encoder re-ranking)
         # ---------------------------------------------------------------- #
-        retrieval_k = min(top_k * 3, 30)  # fetch 3× for re-ranker
         retrieval_svc = RetrievalService()
         retrieval_result = await retrieval_svc.retrieve(
             repo_id=repo_id,
             query=expanded_query,
-            top_k=retrieval_k,
+            top_k=top_k,
             language_filter=language_filter,
             min_score=min_score,
         )
 
         candidates = retrieval_result.get("results", [])
+        
+        t_retrieval = time.perf_counter()
         logger.info(
-            "[QA] {n} candidates retrieved for repo {id}",
+            "[QA] {n} ranked candidates retrieved for repo {id} in {ms:.1f}ms",
             n=len(candidates),
             id=repo_id,
+            ms=(t_retrieval - t_expansion) * 1000,
         )
 
-        # ---------------------------------------------------------------- #
-        # Step 2: Cross-encoder re-ranking
-        # ---------------------------------------------------------------- #
-        if candidates and use_cross_encoder:
-            ranked_result = apply_ranking(
-                query=question,
-                retrieval_result=retrieval_result,
-                use_cross_encoder=True,
-            )
-            ranked_chunks = ranked_result["results"][:top_k]
-            # Use composite_score as the display score
-            for c in ranked_chunks:
-                c["score"] = c.get("composite_score", c.get("score", 0.0))
-        else:
-            ranked_chunks = candidates[:top_k]
+        ranked_chunks = candidates
 
         # ---------------------------------------------------------------- #
         # Step 3: Context assembly
         # ---------------------------------------------------------------- #
         context = build_rag_context(ranked_chunks, max_chars=max_context_chars)
 
-        if not context.strip():
+        if not ranked_chunks or not context.strip():
             logger.warning("[QA] Empty context for repo {id} — question: {q}", id=repo_id, q=question)
+            answer_text = "I couldn't find evidence in the indexed repository."
+            return {
+                "success": True,
+                "question": question,
+                "answer": answer_text,
+                "sources": [],
+                "confidence": 0,
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "is_fallback": False,
+            }
+
+        t_assembly = time.perf_counter()
+
+        # Calculate overall QA confidence from max chunk confidence
+        overall_confidence = max([c.get("confidence", 0) for c in ranked_chunks]) if ranked_chunks else 0
 
         # ---------------------------------------------------------------- #
         # Step 4: LLM answer generation
@@ -163,9 +171,12 @@ class QAService:
                 question=question,
                 context=context,
                 provider=provider,
+                strict_mode=strict_mode,
             )
+            t_llm = time.perf_counter()
+            logger.info("[QA] LLM generation time: {ms:.1f}ms", ms=(t_llm - t_assembly) * 1000)
         except Exception as exc:
-            from app.ml.llm_client import LLMUnavailableError
+            from app.db.ml.llm_client import LLMUnavailableError
             if isinstance(exc, LLMUnavailableError):
                 logger.warning(f"[QA] LLM Provider Unavailable: {str(exc)}")
                 answer_text = f"**Note: The LLM provider is currently unavailable ({str(exc)}).**\n\n" + _fallback_qa(question, ranked_chunks)
@@ -194,18 +205,20 @@ class QAService:
 
         logger.info(
             "[QA] Answer generated for repo {id} in {ms:.1f}ms "
-            "({n} context chunks, {a} chars)",
+            "({n} context chunks, {a} chars, confidence {c}%)",
             id=repo_id,
             ms=elapsed_ms,
             n=len(ranked_chunks),
             a=len(answer_text),
+            c=overall_confidence,
         )
 
         return {
             "success": True,
             "question": question,
             "answer": answer_text,
-            "context_chunks": ranked_chunks,
+            "sources": ranked_chunks,
+            "confidence": overall_confidence,
             "latency_ms": round(elapsed_ms, 2),
             "is_fallback": is_fallback,
         }

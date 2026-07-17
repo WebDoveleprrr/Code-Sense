@@ -12,16 +12,11 @@ Regex-based extraction of:
 
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Optional
+import re #Perform Regular Expression matching
+from typing import Any, Dict, List, Optional #better readability
 
 
-# ------------------------------------------------------------------ #
-# Regex patterns
-# ------------------------------------------------------------------ #
-
-# Function definitions — matches return-type name(params) with optional
-# cv-qualifiers.  Deliberately broad to cover templates and nested types.
+#regex compiled once and reused
 _FUNC_DEF = re.compile(
     r"^(?P<modifiers>(?:(?:inline|static|virtual|explicit|constexpr|"
     r"friend|template\s*<[^>]*>|[\w:*&<>\[\],\s]+?)\s+)+)"
@@ -32,7 +27,7 @@ _FUNC_DEF = re.compile(
     re.MULTILINE,
 )
 
-# Classes / structs
+# Classes / structs ---- Also extracts inheritance
 _CLASS_DECL = re.compile(
     r"(?:template\s*<[^>]*>\s*)?"
     r"(?P<kind>class|struct)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
@@ -58,42 +53,23 @@ _BLOCK_COMMENT = re.compile(r"/\*(?P<body>.*?)\*/", re.DOTALL)
 # Inline // comments
 _INLINE_COMMENT = re.compile(r"//(?P<text>.+)$", re.MULTILINE)
 
-
-# ------------------------------------------------------------------ #
-# Public entry point
-# ------------------------------------------------------------------ #
-
+#Parse a C/C++ source string and return structured metadata --- Every language parser returns the same schema --- That's why metadata_generator doesn't care which parser was used
 def parse_cpp(source: str, file_path: str = "", language: str = "cpp") -> Dict[str, Any]:
-    """
-    Parse a C/C++ source string and return structured metadata:
-    {
-        "language": "cpp" | "c",
-        "file_path": ...,
-        "functions": [...],
-        "classes": [...],
-        "imports": [...],      # #include directives
-        "namespaces": [...],
-        "comments": [...],
-    }
-    """
     return {
         "language": language,
         "file_path": file_path,
         "functions": _extract_functions(source),
         "classes": _extract_classes(source),
-        "imports": _extract_includes(source),
+        "imports": _extract_includes(source), # #include directives
         "namespaces": _extract_namespaces(source),
         "comments": _extract_comments(source),
     }
 
 
-# ------------------------------------------------------------------ #
-# Functions
-# ------------------------------------------------------------------ #
-
+#Find every function using _FUNC_DEF
 def _extract_functions(source: str) -> List[Dict[str, Any]]:
     funcs = []
-    seen: set = set()
+    seen: set = set() #visited
 
     for m in _FUNC_DEF.finditer(source):
         name = m.group("name").strip()
@@ -119,9 +95,8 @@ def _extract_functions(source: str) -> List[Dict[str, Any]]:
 
     return funcs
 
-
+#Return a list of parameter names(data types are removed) --- For semantic search, parameter names are usually more valuable than full type declarations
 def _parse_cpp_params(params_raw: str) -> List[str]:
-    """Return a list of parameter names (stripped of type info)."""
     if not params_raw.strip() or params_raw.strip() in {"void", ""}:
         return []
     result = []
@@ -136,14 +111,10 @@ def _parse_cpp_params(params_raw: str) -> List[str]:
             result.append(name)
     return result
 
-
+#Cleaner metadata
 def _clean_modifiers(raw: str) -> List[str]:
     return [t.strip() for t in raw.split() if t.strip() and t.strip() not in {"", "::"}]
 
-
-# ------------------------------------------------------------------ #
-# Classes / Structs
-# ------------------------------------------------------------------ #
 
 def _extract_classes(source: str) -> List[Dict[str, Any]]:
     classes = []
@@ -162,11 +133,7 @@ def _extract_classes(source: str) -> List[Dict[str, Any]]:
         )
     return classes
 
-
-# ------------------------------------------------------------------ #
-# Includes
-# ------------------------------------------------------------------ #
-
+#Extract #include directives
 def _extract_includes(source: str) -> List[Dict[str, Any]]:
     return [
         {
@@ -179,9 +146,6 @@ def _extract_includes(source: str) -> List[Dict[str, Any]]:
     ]
 
 
-# ------------------------------------------------------------------ #
-# Namespaces
-# ------------------------------------------------------------------ #
 
 def _extract_namespaces(source: str) -> List[Dict[str, Any]]:
     return [
@@ -193,9 +157,6 @@ def _extract_namespaces(source: str) -> List[Dict[str, Any]]:
     ]
 
 
-# ------------------------------------------------------------------ #
-# Comments
-# ------------------------------------------------------------------ #
 
 def _extract_comments(source: str) -> List[Dict[str, Any]]:
     comments = []
@@ -220,20 +181,16 @@ def _extract_comments(source: str) -> List[Dict[str, Any]]:
                 "lineno": _offset_to_line(source, m.start()),
             }
         )
-
+    #Block comments and inline comments are found independently --- Sorting restores file order
     return sorted(comments, key=lambda c: c["lineno"])
 
 
-# ------------------------------------------------------------------ #
-# Helpers
-# ------------------------------------------------------------------ #
-
+#Regex returns Character Position Need Line Number for search results
 def _offset_to_line(source: str, offset: int) -> int:
     return source[:offset].count("\n") + 1
 
-
+#Return the Doxygen/block comment immediately preceding *offset*
 def _preceding_doxygen(source: str, offset: int) -> Optional[str]:
-    """Return the Doxygen/block comment immediately preceding *offset*."""
     snippet = source[:offset].rstrip()
     m = _BLOCK_COMMENT.search(snippet)
     if m and snippet.endswith("*/"):

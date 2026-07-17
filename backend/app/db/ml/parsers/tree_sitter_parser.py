@@ -8,14 +8,14 @@ imports, exports, interfaces, and structs.
 from typing import Any, Dict, List, Optional
 import os
 
-from tree_sitter import Language, Parser
-import tree_sitter_python
-import tree_sitter_javascript
+from tree_sitter import Language, Parser #language --- Represents one programming language grammar
+import tree_sitter_python #Provides Python grammar
+import tree_sitter_javascript 
 import tree_sitter_typescript
 import tree_sitter_cpp
 
+#Load Tree-sitter grammar
 def load_language(lang_module, name: str) -> Language:
-    """Version-agnostic loader for tree-sitter Language."""
     lang_func = getattr(lang_module, "language", None)
     if not lang_func:
         if name == "typescript":
@@ -75,10 +75,9 @@ def get_parser_for_language(lang_name: str) -> Optional[Parser]:
         return parser
     return None
 
+#Public API --- Parse the source code string using tree-sitter and return parsed symbols --- same schema as all parsers
+#Parser maintains state --- Safer to create a fresh parser per file --- Grammar is reused
 def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[str, Any]:
-    """
-    Parse the source code string using tree-sitter and return parsed symbols.
-    """
     parser = get_parser_for_language(language)
     result = {
         "language": language,
@@ -101,9 +100,11 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
 
     symbols: List[Dict[str, Any]] = []
 
+    #access metadata
     def get_node_text(node) -> str:
         return source[node.start_byte:node.end_byte]
 
+    #visit every node in AST tree
     def walk(node, parent_symbol: Optional[str] = None, in_class: bool = False):
         node_type = node.type
         current_parent = parent_symbol

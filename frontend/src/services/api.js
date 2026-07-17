@@ -1,5 +1,5 @@
 // src/services/api.js
-import axios from "axios";
+import axios from "axios"; //axois carries all logs
 
 const BASE_URL = import.meta.env?.VITE_API_URL || "http://localhost:8000/api/v1";
 
@@ -9,16 +9,7 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// ─────────────────────────────────────────────
-// LINES 12-19
-// PURPOSE:
 // Automatically attaches the JWT Access Token to every outgoing HTTP request.
-//
-// WHY IT EXISTS:
-// Instead of manually passing headers to every `api.get()` or `api.post()` call
-// across 50 different React components, this request interceptor centralizes
-// the authorization logic.
-// ─────────────────────────────────────────────
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("access_token");
   if (token) {
@@ -180,19 +171,8 @@ api.interceptors.response.use(
   }
 );
 
-// ─────────────────────────────────────────────
-// API ENDPOINT ABSTRACTIONS
-// PURPOSE:
-// Group all related backend calls into named objects.
-//
-// WHY IT EXISTS:
-// Hardcoding `axios.post('/search', ...)` inside React components makes
-// refactoring impossible and scatters business logic. Abstracting them here
-// allows React hooks to call `searchApi.search(payload)` cleanly.
-// ─────────────────────────────────────────────
 
-// ─── Repositories ────────────────────────────────────────────────────────────
-
+//Repositories
 export const repositoriesApi = {
   /** List all repositories, optional status filter */
   list: (status) =>
@@ -202,21 +182,21 @@ export const repositoriesApi = {
   get: (repoId) => api.get(`/repositories/${repoId}`),
 
   /** Get parsed files for a repo */
-  getFiles: (repoId) => api.get(`/repositories/${repoId}/files`),
+  getFiles: (repoId, params = {}) => api.get(`/repositories/${repoId}/files`, { params }),
 
   /** Get chunk documents */
   getChunks: (repoId, params = {}) =>
     api.get(`/repositories/${repoId}/chunks`, { params }),
 
   /** Ingest from GitHub URL */
-  ingestGitHub: (githubUrl, branch = "main") =>
-    api.post("/repositories/github", { github_url: githubUrl, branch }),
+  ingestGitHub: (githubUrl, branch = "main", overwrite = false) =>
+    api.post("/repositories/github", { github_url: githubUrl, branch, overwrite }),
 
   /** Upload ZIP file */
-  uploadZip: (file, onProgress) => {
+  uploadZip: (file, overwrite = false, onProgress) => {
     const formData = new FormData();
     formData.append("file", file);
-    return api.post("/repositories/upload", formData, {
+    return api.post(`/repositories/upload?overwrite=${overwrite}`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
       onUploadProgress: onProgress,
     });
@@ -224,13 +204,19 @@ export const repositoriesApi = {
 
   /** Delete a repository */
   delete: (repoId) => api.delete(`/repositories/${repoId}`),
+  
+  /** Re-index a repository */
+  reindex: (repoId) => api.post(`/repositories/${repoId}/reindex`),
+
+  /** Rename a repository */
+  rename: (repoId, newName) => api.patch(`/repositories/${repoId}/rename`, { new_name: newName }),
 };
 
 // ─── Semantic Search ──────────────────────────────────────────────────────────
 
 export const searchApi = {
   /** Semantic code search */
-  search: (payload) => api.post("/search", payload),
+  search: (payload, config = {}) => api.post("/search", payload, config),
 
   /** Batch search */
   batchSearch: (payload) => api.post("/search/batch", payload),
@@ -243,28 +229,28 @@ export const searchApi = {
 
 export const qaApi = {
   /** Ask a question about a repository */
-  ask: (payload) => api.post("/qa", payload),
+  ask: (payload, config = {}) => api.post("/qa", payload, { timeout: 300000, ...config }),
 };
 
 // ─── Explain ─────────────────────────────────────────────────────────────────
 
 export const explainApi = {
   /** Explain a code range */
-  explain: (payload) => api.post("/explain", payload),
+  explain: (payload, config = {}) => api.post("/explain", payload, config),
 };
 
 // ─── Dependency Graph ─────────────────────────────────────────────────────────
 
 export const dependencyApi = {
   /** Build dependency graph for a repo */
-  buildGraph: (repoId) => api.get(`/dependency/${repoId}`),
+  buildGraph: (repoId, config = {}) => api.get(`/dependency/${repoId}`, config),
 };
 
 // ─── Impact Analysis ─────────────────────────────────────────────────────────
 
 export const impactApi = {
   /** Run impact analysis for a file/symbol */
-  analyze: (payload) => api.post("/impact/analyze", payload),
+  analyze: (payload, config = {}) => api.post("/impact/analyze", payload, config),
   rebuild: (repoId) => api.post(`/impact/rebuild?repo_id=${repoId}`),
 };
 
@@ -272,16 +258,20 @@ export const impactApi = {
 
 export const reviewApi = {
   /** Run AI code review on the repository */
-  analyze: (payload) => api.post("/review/analyze", payload),
+  analyze: (payload, config = {}) => api.post("/review/analyze", payload, config),
 };
 
 // ─── Architecture ─────────────────────────────────────────────────────────────
 
 export const architectureApi = {
   /** Get architecture summary */
-  summarise: (repoId, provider) =>
+  summarise: (repoId, provider, forceRegenerate = false, config = {}) =>
     api.get(`/architecture/${repoId}`, {
-      params: provider ? { provider } : {},
+      params: { 
+        ...(provider ? { provider } : {}),
+        ...(forceRegenerate ? { force_regenerate: true } : {})
+      },
+      ...config,
     }),
 };
 

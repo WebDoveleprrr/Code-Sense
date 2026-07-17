@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from app_logger import logger
 
-from app.ml.embedder import get_embedder
+from app.db.ml.embedder import get_embedder
 
 
 # ---------------------------------------------------------------------------

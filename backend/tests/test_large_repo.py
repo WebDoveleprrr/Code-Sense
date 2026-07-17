@@ -1,5 +1,5 @@
 import pytest
-from app.ml.pipeline import rank_files
+from app.db.ml.pipeline import rank_files
 
 def test_rank_files_truncation_and_priority():
     # Simulate a parsed repository with 5000 files

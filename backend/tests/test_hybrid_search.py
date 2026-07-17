@@ -52,7 +52,9 @@ async def test_hybrid_search_fallback():
     from app.vector_store.faiss_store import FAISSStore
     
     original_search = FAISSStore.search
+    original_exists = FAISSStore.exists
     FAISSStore.search = MagicMock(return_value=([0], [0.99]))
+    FAISSStore.exists = MagicMock(return_value=True)
     
     try:
         res = await service.retrieve(

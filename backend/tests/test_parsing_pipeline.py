@@ -17,7 +17,7 @@ from typing import Any, Dict
 # ------------------------------------------------------------------ #
 
 def test_python_parser_functions():
-    from app.ml.parsers.python_parser import parse_python
+    from app.db.ml.parsers.python_parser import parse_python
 
     source = textwrap.dedent(
         '''
@@ -79,7 +79,7 @@ def test_python_parser_functions():
 
 
 def test_python_parser_syntax_error():
-    from app.ml.parsers.python_parser import parse_python
+    from app.db.ml.parsers.python_parser import parse_python
 
     result = parse_python("def broken(", "bad.py")
     assert result["functions"] == []
@@ -91,7 +91,7 @@ def test_python_parser_syntax_error():
 # ------------------------------------------------------------------ #
 
 def test_js_parser_functions():
-    from app.ml.parsers.js_ts_parser import parse_js_ts
+    from app.db.ml.parsers.js_ts_parser import parse_js_ts
 
     source = textwrap.dedent(
         """
@@ -140,7 +140,7 @@ def test_js_parser_functions():
 
 
 def test_ts_parser_interfaces():
-    from app.ml.parsers.js_ts_parser import parse_js_ts
+    from app.db.ml.parsers.js_ts_parser import parse_js_ts
 
     source = textwrap.dedent(
         """
@@ -174,7 +174,7 @@ def test_ts_parser_interfaces():
 # ------------------------------------------------------------------ #
 
 def test_cpp_parser_basic():
-    from app.ml.parsers.cpp_parser import parse_cpp
+    from app.db.ml.parsers.cpp_parser import parse_cpp
 
     source = textwrap.dedent(
         """
@@ -219,7 +219,7 @@ def test_cpp_parser_basic():
 # ------------------------------------------------------------------ #
 
 def test_parse_source_dispatch():
-    from app.ml.parsers import parse_source
+    from app.db.ml.parsers import parse_source
 
     py_file = {"file_path": "x.py", "language": "python", "content": "def foo(): pass\n"}
     result = parse_source(py_file)
@@ -241,7 +241,7 @@ def test_parse_source_dispatch():
 # ------------------------------------------------------------------ #
 
 def test_build_file_metadata():
-    from app.ml.metadata_generator import build_file_metadata
+    from app.db.ml.metadata_generator import build_file_metadata
 
     file_dict = {"file_path": "foo.py", "language": "python", "content": "x=1\n", "line_count": 1}
     parsed = {
@@ -263,7 +263,7 @@ def test_build_file_metadata():
 
 
 def test_build_repo_metadata():
-    from app.ml.metadata_generator import build_repo_metadata
+    from app.db.ml.metadata_generator import build_repo_metadata
 
     files = [
         {"file_path": "a.py", "language": "python", "line_count": 100,
@@ -285,7 +285,7 @@ def test_build_repo_metadata():
 # ------------------------------------------------------------------ #
 
 def test_window_chunker_basic():
-    from app.ml.chunker import chunk_files
+    from app.db.ml.chunker import chunk_files
 
     content = "\n".join([f"line {i}" for i in range(1, 201)])
     files = [{"file_path": "big.py", "language": "python", "content": content, "line_count": 200}]
@@ -300,7 +300,7 @@ def test_window_chunker_basic():
 
 
 def test_semantic_chunker_respects_boundaries():
-    from app.ml.chunker import chunk_files
+    from app.db.ml.chunker import chunk_files
 
     source = textwrap.dedent(
         """

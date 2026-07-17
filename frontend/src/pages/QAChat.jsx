@@ -19,10 +19,45 @@ export default function QAChat() {
   const [sources, setSources] = useState([]); //stores retirved chunks
   const [selectedSource, setSelectedSource] = useState(null); //tracks which source file user clicked
   
+  const [strictMode, setStrictMode] = useState(false);
+  
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-  //indexing finieshed or not
+  const abortControllerRef = useRef(null);
   const isRepoReady = repo ? repo.status === "ready" : false;
+  
+  const groupedSources = React.useMemo(() => {
+    if (!sources || sources.length === 0) return [];
+    
+    const groups = {};
+    sources.forEach(src => {
+      const path = src.file_path;
+      if (!groups[path]) {
+        groups[path] = {
+          file_path: path,
+          language: src.language || 'text',
+          chunks: [],
+          maxScore: 0
+        };
+      }
+      groups[path].chunks.push(src);
+      const score = src.final_score || src.composite_score || src.score || 0;
+      if (score > groups[path].maxScore) groups[path].maxScore = score;
+    });
+
+    return Object.values(groups).map(group => {
+      group.chunks.sort((a, b) => a.start_line - b.start_line);
+      const ranges = group.chunks.map(c => `${c.start_line}-${c.end_line}`).join(', ');
+      group.lineRanges = ranges;
+      let relevance = "Low Relevance";
+      if (group.maxScore > 0.8) relevance = "Highly Relevant";
+      else if (group.maxScore > 0.5) relevance = "Relevant";
+      else if (group.maxScore > 0.3) relevance = "Moderately Relevant";
+      group.relevance = relevance;
+      return group;
+    });
+  }, [sources]);
+  
   //auto scroll when new message arrives
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,6 +75,12 @@ export default function QAChat() {
     const query = text || input; //dfault uestion or asked question
     if (!query.trim() || !repoId || !isRepoReady) return;
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     const userMsg = { role: "user", content: query.trim() }; //create user message
     setMessages((prev) => [...prev, userMsg]); //append to chat
     setInput("");
@@ -49,20 +90,36 @@ export default function QAChat() {
       const res = await qaApi.ask({
         repo_id: repoId,
         question: query.trim(),
-        history: messages.map(m => ({ role: m.role, content: m.content }))
-      });
+        history: messages.map(m => ({ role: m.role, content: m.content })),
+        strict_mode: strictMode
+      }, { signal: controller.signal });
       //store answer from AI
-      setMessages((prev) => [...prev, { role: "assistant", content: res.answer }]);
-      if (res.sources && res.sources.length > 0) {
-        setSources(res.sources); //store sources(retrived chunks)
-      }
+      setMessages((prev) => [...prev, { 
+        role: "assistant", 
+        content: res.answer, 
+        confidence: res.confidence,
+        sources: res.sources || []
+      }]);
     } catch (err) { //error handling
+      if (err.name === 'CanceledError' || err.message === 'canceled' || err.code === 'ERR_CANCELED') {
+        return;
+      }
       toast.error(err.message || "Failed to answer question");
       setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, I encountered an error while processing your request." }]);
     } finally {
-      setLoading(false);
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
   //starter or example prompts
   const suggestions = [
     "Explain the architecture",
@@ -77,8 +134,20 @@ export default function QAChat() {
       <div className="flex-1 flex flex-col min-w-0 border-r border-slate-800">
         <div className="h-16 px-6 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-950/50 backdrop-blur-md">
           <h2 className="text-lg font-semibold text-slate-50">Repository Q&A</h2>
-          <div className="w-64">
-            <RepoSelector value={repoId} onChange={setRepoId} />
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <input 
+                type="checkbox" 
+                id="strict_mode" 
+                checked={strictMode} 
+                onChange={(e) => setStrictMode(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-600"
+              />
+              <label htmlFor="strict_mode" className="text-xs text-slate-400 select-none cursor-pointer">Strict Mode (No Hallucinations)</label>
+            </div>
+            <div className="w-64">
+              <RepoSelector value={repoId} onChange={setRepoId} />
+            </div>
           </div>
         </div>
 
@@ -126,7 +195,81 @@ export default function QAChat() {
                       <p className="text-sm">{msg.content}</p>
                     ) : (
                       <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-slate-950 prose-pre:border prose-pre:border-slate-800">
+                        {msg.confidence !== undefined && (
+                          <div className="mb-4 pb-2 border-b border-slate-800 flex items-center gap-2 text-xs">
+                            <span className="text-slate-400 font-semibold uppercase tracking-wider">Confidence Score:</span>
+                            <span className={`font-mono px-2 py-0.5 rounded-full ${msg.confidence > 80 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : msg.confidence > 50 ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                              {msg.confidence}%
+                            </span>
+                          </div>
+                        )}
                         <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        {msg.sources && msg.sources.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-slate-700/50">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                                <FileCode2 size={14} /> Sources
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button 
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(msg.content);
+                                    toast.success("Answer copied to clipboard!");
+                                  }}
+                                  className="text-xs text-slate-500 hover:text-indigo-400 transition-colors"
+                                >
+                                  Copy Answer
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              {msg.sources.map((source, idx) => (
+                                <details key={idx} className="group border border-slate-700/50 rounded-xl overflow-hidden bg-slate-800/20">
+                                  <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-800/40 transition-colors">
+                                    <div className="flex items-center gap-2">
+                                      <FileCode2 size={14} className="text-indigo-400" />
+                                      <span className="text-sm font-medium text-slate-200">
+                                        {source.file_path.split('/').pop()}
+                                      </span>
+                                      <span className="text-xs text-slate-500">
+                                        Lines {source.start_line}-{source.end_line}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs text-slate-500 group-open:hidden">View Snippet</span>
+                                    <span className="text-xs text-slate-500 hidden group-open:block">Hide Snippet</span>
+                                  </summary>
+                                  <div className="p-4 bg-slate-900 border-t border-slate-700/50 relative">
+                                    <div className="absolute top-2 right-2 flex gap-2">
+                                      <button 
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          navigator.clipboard.writeText(source.content || source.snippet || "");
+                                          toast.success("Snippet copied!");
+                                        }}
+                                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 rounded border border-slate-600 transition-colors"
+                                      >
+                                        Copy Code
+                                      </button>
+                                      <button 
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          navigator.clipboard.writeText(source.file_path);
+                                          toast.success("Path copied!");
+                                        }}
+                                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 rounded border border-slate-600 transition-colors"
+                                      >
+                                        Copy Path
+                                      </button>
+                                    </div>
+                                    <pre className="text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap mt-6">
+                                      {source.content || source.snippet || "Snippet not available"}
+                                    </pre>
+                                  </div>
+                                </details>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -188,68 +331,6 @@ export default function QAChat() {
         </div>
       </div>
 
-      {/* Right Sidebar - Sources Panel - creates buttons for source files in the right panel */}
-      <div className="w-80 bg-slate-950 flex flex-col shrink-0 hidden lg:flex">
-        <div className="h-16 px-4 border-b border-slate-800 flex items-center shrink-0">
-          <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-            <Info size={16} className="text-indigo-400" /> Sources Panel
-          </h3>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 scrollbar-none space-y-4">
-          {sources.length === 0 ? (
-            <div className="text-center py-10">
-              <FileCode2 size={32} className="text-slate-700 mx-auto mb-3" />
-              <p className="text-sm text-slate-500">Referenced files will appear here when you ask questions.</p>
-            </div>
-          ) : (
-            <>
-              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Files Referenced</h4>
-              <div className="space-y-2">
-                {sources.map((src, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setSelectedSource(selectedSource === idx ? null : idx)}
-                    className={`w-full text-left p-3 rounded-xl border transition-all ${
-                      selectedSource === idx 
-                        ? 'bg-indigo-500/10 border-indigo-500/30' 
-                        : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-slate-200 truncate pr-2">
-                        {src.file_path.split('/').pop()}
-                      </span>
-                      <ArrowRight size={14} className={`text-slate-500 transition-transform ${selectedSource === idx ? 'rotate-90 text-indigo-400' : ''}`} />
-                    </div>
-                    <p className="text-xs text-slate-500 truncate">{src.file_path}</p>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* Source Preview - if a source file is clicked then show the code inside it */}
-          {selectedSource !== null && sources[selectedSource] && (
-            <div className="mt-6 border-t border-slate-800 pt-6 animate-fade-in">
-              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Code Preview</h4>
-              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                <div className="px-3 py-2 border-b border-slate-800 bg-slate-950">
-                  <span className="text-xs text-slate-400 font-mono">Lines {sources[selectedSource].start_line}-{sources[selectedSource].end_line}</span>
-                </div>
-                <div className="max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
-                  <CodeBlock
-                    code={sources[selectedSource].content}
-                    language={sources[selectedSource].language || "text"}
-                    startLine={sources[selectedSource].start_line}
-                    compact
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

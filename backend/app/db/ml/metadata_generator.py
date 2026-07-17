@@ -1,26 +1,10 @@
 # backend/app/ml/metadata_generator.py
-"""
-CodeSense — Metadata Generator
-Aggregates parsed AST results into:
-  - per-file ParsedFileMetadata dicts
-  - repo-level RepositoryMetadata summary
-Both are pure Python dicts (schema defined below) so they can be
-serialised to MongoDB or attached to chunk documents.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-
-# ------------------------------------------------------------------ #
-# Schema helpers (typed dicts for documentation; not enforced at
-# runtime since we use plain dicts for flexibility)
-# ------------------------------------------------------------------ #
-
 """
-ParsedFileMetadata structure:
-{
+ParsedFileMetadata structure:{ This schema represents one file
     "file_path": str,
     "language": str,
     "line_count": int,
@@ -38,8 +22,7 @@ ParsedFileMetadata structure:
     "namespaces": [...],        # C++ only
 }
 
-RepositoryMetadata structure:
-{
+RepositoryMetadata structure:{ Represents the whole repository
     "total_files": int,
     "total_lines": int,
     "total_functions": int,
@@ -50,23 +33,11 @@ RepositoryMetadata structure:
 }
 """
 
-
+#Merge repo_parser Output(repo_parser.py) + AST Parser Output into one standard dictionary.
 def build_file_metadata(
     file_dict: Dict[str, Any],
     parsed: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Merge raw file_dict fields with the parsed AST dict into a single
-    unified ParsedFileMetadata dict.
-
-    Parameters
-    ----------
-    file_dict : dict
-        Output from repo_parser.parse_repository — contains
-        {file_path, language, content, line_count}.
-    parsed : dict
-        Output from parsers.parse_source — language-specific AST data.
-    """
     functions: List = parsed.get("functions") or []
     classes: List = parsed.get("classes") or []
     imports: List = parsed.get("imports") or []
@@ -94,14 +65,10 @@ def build_file_metadata(
     }
     return metadata
 
-
+#Convert many files into one repository summary
 def build_repo_metadata(
     parsed_files_meta: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """
-    Build a high-level RepositoryMetadata summary from a list of
-    ParsedFileMetadata dicts.
-    """
     language_breakdown: Dict[str, int] = {}
     total_lines = 0
     total_functions = 0
@@ -127,9 +94,8 @@ def build_repo_metadata(
         "files": [_file_summary(fm) for fm in parsed_files_meta],
     }
 
-
+#Instead of embedding everything inside RepositoryMetadata only store summary.
 def _file_summary(fm: Dict[str, Any]) -> Dict[str, Any]:
-    """Lightweight file entry for the repo-level summary (no raw lists)."""
     return {
         "file_path": fm["file_path"],
         "language": fm["language"],
@@ -138,19 +104,11 @@ def _file_summary(fm: Dict[str, Any]) -> Dict[str, Any]:
         "class_count": fm["class_count"],
         "import_count": fm["import_count"],
         "comment_count": fm["comment_count"],
+        "imports": fm.get("imports", []),
     }
 
-
+#Convert structured metadata back into plain text
 def extract_symbol_text(file_meta: Dict[str, Any]) -> str:
-    """
-    Produce a compact text representation of all symbols in a file,
-    suitable for inclusion in semantic search chunks or summaries.
-
-    Example output:
-        Functions: parse_python, _extract_functions, _extract_classes
-        Classes: PythonParser (bases: BaseParser)
-        Imports: ast, re, tokenize
-    """
     parts: List[str] = []
 
     funcs = [f.get("name", "") for f in file_meta.get("functions", [])]
@@ -172,8 +130,8 @@ def extract_symbol_text(file_meta: Dict[str, Any]) -> str:
 
     imports = file_meta.get("imports", [])
     if imports:
-        modules = list({imp.get("module", "") for imp in imports if imp.get("module")})
-        parts.append("Imports: " + ", ".join(modules[:20]))  # cap at 20
+        modules = list({imp.get("module", "") for imp in imports if imp.get("module")}) #set removes duplicates
+        parts.append("Imports: " + ", ".join(modules[:20]))  # cap at 20 for imports
 
     interfaces = file_meta.get("interfaces", [])
     if interfaces:
@@ -181,6 +139,6 @@ def extract_symbol_text(file_meta: Dict[str, Any]) -> str:
 
     docstring = file_meta.get("docstring")
     if docstring:
-        parts.append("Docstring: " + docstring[:300])
+        parts.append("Docstring: " + docstring[:300]) #only first 300 char
 
     return "\n".join(parts)

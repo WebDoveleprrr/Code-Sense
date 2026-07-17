@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Optional
 
 from app_logger import logger
 
-from app.ml.llm_client import complete
-from app.ml.prompt_templates import (
+from app.db.ml.llm_client import complete
+from app.db.ml.prompt_templates import (
     SYSTEM_PROMPT_ARCHITECTURE,
     SYSTEM_PROMPT_EXPLAIN,
     SYSTEM_PROMPT_QA,
@@ -61,6 +61,7 @@ async def generate_answer(
     context: str,
     *,
     provider: Optional[str] = None,
+    strict_mode: bool = False,
 ) -> str:
     """
     Generate a grounded answer to `question` using `context`.
@@ -69,37 +70,23 @@ async def generate_answer(
         question:  The developer's natural-language question.
         context:   Pre-formatted retrieved code context string.
         provider:  Optional LLM provider override ("openai" | "anthropic" | "local").
+        strict_mode: Prevent hallucination by requiring strict adherence to context.
 
     Returns:
         Markdown-formatted answer string.
     """
-    # FLOW:
-    # qa_service
-    #   ↓ (searches FAISS)
-    # context string
-    #   ↓
-    # generate_answer()
-    #   ↓ (build_qa_prompt)
-    # complete()
-    #   ↓
-    # Gemini / OpenAI API
-    #   ↓
-    # Markdown Answer
-
     if not context.strip():
         # Guard clause: Hallucination prevention.
         # If the vector search found nothing, do NOT let the LLM guess the answer.
-        return (
-            "No relevant code context was found for this question.\n\n"
-            "_Try rephrasing your query or ensure the repository has been indexed._"
-        )
+        return "I couldn't find evidence in the indexed repository."
 
-    user_prompt = build_qa_prompt(question=question, context=context)
+    user_prompt = build_qa_prompt(question=question, context=context, strict_mode=strict_mode)
 
     logger.info(
-        "RAG answer generation | question_len={q} context_len={c}",
+        "RAG answer generation | question_len={q} context_len={c} strict_mode={s}",
         q=len(question),
         c=len(context),
+        s=strict_mode,
     )
 
     answer = await complete(

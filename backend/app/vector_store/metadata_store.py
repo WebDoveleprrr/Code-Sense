@@ -1,21 +1,4 @@
-# backend/app/vector_store/metadata_store.py
-"""
-CodeSense — Vector Store Metadata Persistence
-
-Maintains a lightweight JSON sidecar alongside every FAISS index that maps
-FAISS integer IDs → chunk metadata (file_path, start_line, end_line, language,
-chunk_type, symbol_name).
-
-This enables fast metadata lookups without a MongoDB round-trip during search,
-and serves as a fallback when the DB is unavailable.
-
-File layout:
-  {VECTOR_STORE_DIR}/{repo_id}/
-    index.faiss         ← FAISS binary (managed by FAISSStore)
-    index_meta.json     ← FAISS-level metadata (managed by FAISSStore)
-    chunk_meta.json     ← per-vector chunk metadata (managed HERE)
-"""
-
+# backend/app/vector_store/metadata_store.py --- Stores information about the embedded vectors
 from __future__ import annotations
 
 import json
@@ -30,31 +13,9 @@ from app.core.config import get_settings
 CHUNK_META_FILE = "chunk_meta.json"
 
 
-# ---------------------------------------------------------------------------
-# MetadataStore
-# ---------------------------------------------------------------------------
-
+#Manage one repository's metadata --- One Repository -> One MetadataStore Object -> One chunk_meta.json
 class MetadataStore:
-    """
-    Reads and writes chunk_meta.json for a given repository.
-
-    The JSON structure is a list (indexed by FAISS integer ID):
-        [
-          {
-            "faiss_id": 0,
-            "chunk_id": "<mongo_id>",
-            "file_path": "src/main.py",
-            "language": "python",
-            "start_line": 1,
-            "end_line": 40,
-            "chunk_type": "function",
-            "symbol_name": "process_files",
-          },
-          ...
-        ]
-    """
-
-    def __init__(self, repo_id: str, index_path: Optional[str] = None) -> None:
+    def __init__(self, repo_id: str, index_path: Optional[str] = None) -> None: #contains All Metadata in memory
         self.repo_id = repo_id
         settings = get_settings()
         self._index_dir = Path(index_path or (settings.VECTOR_STORE_DIR / repo_id))
@@ -63,24 +24,12 @@ class MetadataStore:
         self._records: List[Dict[str, Any]] = []
         self._loaded = False
 
-    # ------------------------------------------------------------------ #
-    # Build
-    # ------------------------------------------------------------------ #
-
-    def build_from_chunks(
+    
+    def build_from_chunks( #Create metadata after chunking --- output:chunk_meta.json
         self,
         chunks: List[Dict[str, Any]],
         chunk_ids: Optional[List[str]] = None,
     ) -> None:
-        """
-        Populate in-memory metadata from the chunk dicts produced by
-        chunker.py.  Call save() afterwards to persist.
-
-        Args:
-            chunks:    List of chunk dicts (same order as vectors in FAISS).
-            chunk_ids: Optional list of MongoDB ObjectId strings, one per chunk.
-                       If omitted, chunk_id fields will be left empty.
-        """
         self._records = []
         for faiss_id, chunk in enumerate(chunks):
             record: Dict[str, Any] = {
@@ -102,20 +51,15 @@ class MetadataStore:
             id=self.repo_id,
             n=len(self._records),
         )
-
+    #Back-fill MongoDB chunk IDs after insert_many returns them
     def patch_chunk_ids(self, chunk_ids: List[str]) -> None:
-        """Back-fill MongoDB chunk IDs after insert_many returns them."""
         self._ensure_loaded()
         for i, cid in enumerate(chunk_ids):
             if i < len(self._records):
                 self._records[i]["chunk_id"] = cid
 
-    # ------------------------------------------------------------------ #
-    # Persist
-    # ------------------------------------------------------------------ #
-
+    #Write metadata to disk using a streaming approach to prevent OOM
     def save(self) -> None:
-        """Write metadata to disk using a streaming approach to prevent OOM."""
         import os
         tmp_path = self._meta_path.with_suffix(".tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -127,6 +71,11 @@ class MetadataStore:
                 else:
                     f.write("\n")
             f.write("]")
+        if self._meta_path.exists():
+            try:
+                self._meta_path.unlink()
+            except OSError:
+                pass
         os.replace(tmp_path, self._meta_path)
             
         logger.info(
@@ -134,9 +83,8 @@ class MetadataStore:
             id=self.repo_id,
             n=len(self._records),
         )
-
+    #Load metadata from disk
     def load(self) -> None:
-        """Load metadata from disk."""
         if not self._meta_path.exists():
             logger.warning(
                 "[{id}] chunk_meta.json not found at {p}.",
@@ -157,62 +105,51 @@ class MetadataStore:
     def exists(self) -> bool:
         return self._meta_path.exists()
 
-    # ------------------------------------------------------------------ #
-    # Lookups
-    # ------------------------------------------------------------------ #
-
+    #Return metadata for a single FAISS integer ID
     def get_by_faiss_id(self, faiss_id: int) -> Optional[Dict[str, Any]]:
-        """Return metadata for a single FAISS integer ID."""
         self._ensure_loaded()
         if 0 <= faiss_id < len(self._records):
             return self._records[faiss_id]
         return None
-
+    #Return metadata for a list of FAISS IDs (preserves order, None on miss)
     def get_many(self, faiss_ids: List[int]) -> List[Optional[Dict[str, Any]]]:
-        """Return metadata for a list of FAISS IDs (preserves order, None on miss)."""
         self._ensure_loaded()
         return [self.get_by_faiss_id(fid) for fid in faiss_ids]
-
+    #Return only those faiss_ids whose language matches the filte
     def filter_by_language(
         self,
         faiss_ids: List[int],
         language: str,
     ) -> List[int]:
-        """Return only those faiss_ids whose language matches the filter."""
         self._ensure_loaded()
         return [
             fid for fid in faiss_ids
             if self.get_by_faiss_id(fid) is not None
             and self.get_by_faiss_id(fid).get("language") == language
         ]
-
+    #Return only those faiss_ids of the given chunk type
     def filter_by_chunk_type(
         self,
         faiss_ids: List[int],
         chunk_type: str,
     ) -> List[int]:
-        """Return only those faiss_ids of the given chunk type."""
         self._ensure_loaded()
         return [
             fid for fid in faiss_ids
             if self.get_by_faiss_id(fid) is not None
             and self.get_by_faiss_id(fid).get("chunk_type") == chunk_type
         ]
-
+    #Return all metadata records
     def all_records(self) -> List[Dict[str, Any]]:
-        """Return all metadata records."""
         self._ensure_loaded()
         return list(self._records)
-
+    #total chunks
     @property
     def count(self) -> int:
         self._ensure_loaded()
         return len(self._records)
 
-    # ------------------------------------------------------------------ #
-    # Internal
-    # ------------------------------------------------------------------ #
-
+    #Lazy Loading --- Don't load something until it is actually needed
     def _ensure_loaded(self) -> None:
         if not self._loaded:
             self.load()

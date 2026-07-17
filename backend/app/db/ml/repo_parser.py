@@ -1,17 +1,5 @@
-# backend/app/ml/repo_parser.py
-"""
-CodeSense — Repository File Parser (v2)
-Walks a directory, filters source files, decodes content, and
-returns structured file dicts ready for the chunking pipeline.
-
-Improvements over v1
---------------------
-* Binary-file detection (skip non-text files even if extension matches)
-* .gitignore-aware skip patterns (best-effort)
-* File size cap to avoid embedding megabyte-scale generated files
-* Returns richer dict including sha256 content hash for dedup
-"""
-
+# backend/app/ml/repo_parser.py --- scans a repository directory, identifies supported source files, filters out unnecessary files, 
+# safely reads file contents, detects encodings, and prepares file information for the rest of the ingestion pipeline
 from __future__ import annotations
 
 import asyncio
@@ -19,13 +7,10 @@ import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import chardet
-from app_logger import logger
+import chardet #Detect file encoding --- Instead of assuming UTF-8, CodeSense detects encoding first --- Without this, many repos fail to parse
+from app_logger import logger #shows logs
 
 
-# ------------------------------------------------------------------ #
-# Language extension map
-# ------------------------------------------------------------------ #
 
 SUPPORTED_EXTENSIONS: Dict[str, str] = {
     # Python
@@ -120,10 +105,6 @@ SKIP_EXTENSIONS = {
 MAX_FILE_SIZE_BYTES: int = 1024 * 1024  # 1 MB
 
 
-# ------------------------------------------------------------------ #
-# Public API
-# ------------------------------------------------------------------ #
-
 async def parse_repository(repo_dir: Path) -> List[Dict]:
     """
     Async entry point: walk *repo_dir* and return a list of file dicts:
@@ -213,7 +194,7 @@ def _walk_sync(repo_dir: Path) -> List[Dict]:
 
         results.append(
             {
-                "file_path": str(path.relative_to(repo_dir)),
+                "file_path": path.relative_to(repo_dir).as_posix(),
                 "language": language,
                 "size_bytes": size_bytes,
             }
@@ -239,7 +220,7 @@ def _should_skip_path(path: Path, repo_dir: Path, gitignore_patterns: List[str])
         if part in SKIP_DIRS:
             return True
 
-    rel_str = str(path.relative_to(repo_dir))
+    rel_str = path.relative_to(repo_dir).as_posix()
     for pattern in gitignore_patterns:
         if _gitignore_match(pattern, rel_str, parts):
             return True

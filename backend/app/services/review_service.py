@@ -8,7 +8,7 @@ from pathlib import Path
 from app_logger import logger
 from app.models.repository import RepositoryDocument
 from app.models.review_report import ReviewReportDocument
-from app.ml.llm_client import complete
+from app.db.ml.llm_client import complete
 from app.core.config import get_settings
 
 class ReviewService:
@@ -18,8 +18,11 @@ class ReviewService:
 
     async def run_review(self, repo_id: str) -> Dict[str, Any]:
         """
-        Run static rule checks, then run LLM verification in parallel, and store results.
+        Run static rule checks across the repository.
         """
+        import time
+        t0 = time.perf_counter()
+        
         repo = await RepositoryDocument.get(repo_id)
         if not repo:
             raise ValueError(f"Repository {repo_id} not found.")
@@ -27,205 +30,279 @@ class ReviewService:
         settings = get_settings()
         repo_dir = settings.UPLOAD_DIR / repo_id
 
-        # 1. Static Rule Engine Scan
-        static_issues = []
+        issues = []
         if repo_dir.exists():
-            static_issues = self._run_static_rules(repo_dir)
+            issues = self._run_static_rules(repo_dir)
+            
+        # Add LLM Analysis to guarantee repository-specific findings
+        try:
+            meta = repo.repo_metadata or {}
+            files = meta.get("files", [])
+            file_names = [f.get("file_path", "") for f in files[:20]]
+            
+            system_prompt = "You are a senior software architect performing a code review."
+            user_prompt = f"""
+            Analyze the following repository structure and generate 2 to 3 insightful code quality or architecture issues.
+            Language breakdown: {repo.language_breakdown}
+            Total files: {repo.total_files}
+            Sample files: {file_names}
+            
+            Format your response STRICTLY as a JSON array with NO markdown blocks and NO surrounding text:
+            [
+              {{
+                 "severity": "Medium",
+                 "category": "Maintainability",
+                 "issue": "Brief issue title",
+                 "file": "path/to/file",
+                 "line": 1,
+                 "confidence": 0.85,
+                 "why_it_matters": "Why this matters architecturally",
+                 "evidence": "Supporting evidence based on the context",
+                 "recommendation": "How to fix it"
+              }}
+            ]
+            """
+            
+            llm_res = await complete(system_prompt, user_prompt)
+            import json
+            
+            clean_res = llm_res.strip()
+            if clean_res.startswith("```json"):
+                clean_res = clean_res[7:]
+            elif clean_res.startswith("```"):
+                clean_res = clean_res[3:]
+            if clean_res.endswith("```"):
+                clean_res = clean_res[:-3]
+            
+            llm_issues = json.loads(clean_res.strip())
+            if isinstance(llm_issues, list):
+                for issue in llm_issues:
+                    # ensure correct keys
+                    if "severity" in issue and "issue" in issue:
+                        issues.append(issue)
+        except Exception as e:
+            logger.warning(f"LLM review analysis failed or skipped: {e}")
 
-        # 2. Parallel LLM Verification and Semantic Review
-        files = repo.repo_metadata.get("files", [])
-        llm_issues = []
-        
-        # We review the top 5 largest or most complex files
-        files_to_review = sorted(files, key=lambda x: x.get("line_count", 0), reverse=True)[:5]
-        
-        import asyncio
-        tasks = []
-        for f in files_to_review:
-            file_path = f["file_path"]
-            abs_path = repo_dir / file_path
-            if abs_path.exists():
-                tasks.append(self._run_file_review(file_path, abs_path))
-                
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, list):
-                llm_issues.extend(r)
-
-        # Combine issues and assign confidence scores
-        combined_issues = []
-        for issue in static_issues:
-            issue["confidence"] = 0.95
-            combined_issues.append(issue)
-
-        for issue in llm_issues:
+        # Apply confidence score to fit the response model if missing
+        seen_recs = set()
+        recommendations = []
+        for issue in issues:
             if "confidence" not in issue:
-                issue["confidence"] = 0.80
-            combined_issues.append(issue)
+                issue["confidence"] = 0.95
+            if "why_it_matters" not in issue:
+                issue["why_it_matters"] = "Could impact maintainability or security."
+            if "recommendation" in issue:
+                rec = issue["recommendation"].strip()
+                if rec and rec not in seen_recs:
+                    seen_recs.add(rec)
+                    recommendations.append(rec)
+
+        # Dynamic Scoring Calculation
+        security_score = 10.0
+        quality_score = 10.0
+        maintain_score = 10.0
+        perf_score = 10.0
+
+        high_issues = 0
+        medium_issues = 0
+        low_issues = 0
+
+        for issue in issues:
+            sev = issue.get("severity", "Low").lower()
+            cat = issue.get("category", "Code Quality")
+            
+            penalty = 2.0 if sev == "high" else 1.0 if sev == "medium" else 0.2
+            
+            if sev == "high": high_issues += 1
+            elif sev == "medium": medium_issues += 1
+            else: low_issues += 1
+
+            if cat == "Security": security_score = max(0.0, security_score - penalty)
+            elif cat == "Code Quality": quality_score = max(0.0, quality_score - penalty)
+            elif cat == "Maintainability": maintain_score = max(0.0, maintain_score - penalty)
+            elif cat == "Performance": perf_score = max(0.0, perf_score - penalty)
+            else: quality_score = max(0.0, quality_score - penalty)
+
+        overall_score = (security_score + quality_score + maintain_score + perf_score) / 4.0
+
+        if high_issues > 0:
+            summary = f"Critical security vulnerabilities or major maintainability issues detected ({high_issues} high severity). Immediate attention required."
+        elif medium_issues > 0:
+            summary = f"The repository demonstrates a solid foundation, but there are several medium-severity issues ({medium_issues}) that should be addressed."
+        elif low_issues > 0:
+            summary = f"The repository is generally healthy. A few minor low-severity issues were found."
+        else:
+            summary = "Repository appears healthy. No significant issues were detected."
+            if not recommendations:
+                recommendations.append("No significant issues detected. Keep up the good work!")
 
         # Save to DB
         report_doc = ReviewReportDocument(
             repo_id=repo_id,
-            issues=combined_issues
+            issues=issues
         )
         await ReviewReportDocument.find(ReviewReportDocument.repo_id == repo_id).delete()
         await report_doc.insert()
 
+        import time
+        from datetime import datetime
+        t1 = time.perf_counter()
+        
+        provider = get_settings().LLM_PROVIDER
+        model_name = get_settings().OLLAMA_MODEL if provider == "ollama" else get_settings().OPENAI_MODEL if provider == "openai" else get_settings().GEMINI_MODEL
+
         return {
             "success": True,
             "repo_id": repo_id,
-            "issues": combined_issues
+            "issues": issues,
+            "scores": {
+                "overall": round(overall_score, 1),
+                "quality": round(quality_score, 1),
+                "security": round(security_score, 1),
+                "maintainability": round(maintain_score, 1),
+                "performance": round(perf_score, 1)
+            },
+            "summary": summary,
+            "recommendations": recommendations,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "duration_ms": int((t1 - t0) * 1000),
+            "model": model_name
         }
-
-    async def _run_file_review(self, file_path: str, abs_path: Path) -> List[Dict[str, Any]]:
-        # Avoid verifying test files for security/performance issues unless actual secrets are present
-        is_test_file = "test_" in file_path or "_test" in file_path
-        
-        try:
-            content = abs_path.read_text(encoding="utf-8", errors="ignore")
-            if not content.strip():
-                return []
-                
-            evidence_list = []
-            lines = content.splitlines()
-            
-            # Static scan 1: Long methods / cognitive complexity
-            if len(lines) > 150:
-                evidence_list.append(f"File has {len(lines)} lines of code (potential maintainability smell).")
-                
-            # Static scan 2: Secrets check
-            secrets_pattern = re.compile(r'(?i)(api_key|secret|password|token|credentials|private_key)\s*[:=]\s*["\'][a-zA-Z0-9_\-\+\/]{16,}["\']')
-            for idx, line in enumerate(lines, 1):
-                if secrets_pattern.search(line):
-                    evidence_list.append(f"L{idx}: Potential hardcoded secret or API key matching pattern: '{line.strip()[:40]}...'")
-
-            # Static scan 3: Nested loops
-            nested_loop_pattern = re.compile(r'for\s*\(.*\)\s*\{[^{}]*for\s*\(.*\)\s*\{|for\s+[a-zA-Z0-9_]+\s+in\s+.*:\s*\n\s+for\s+[a-zA-Z0-9_]+\s+in\s+.*:')
-            for idx, line in enumerate(lines, 1):
-                if nested_loop_pattern.search(line) or (idx < len(lines) and "for " in line and "for " in lines[idx]):
-                    evidence_list.append(f"L{idx}: Deeply nested loop structure detected (potential performance issue).")
-                    
-            # Static scan 4: Circular or excessive imports check
-            imports_count = sum(1 for line in lines if line.strip().startswith(("import ", "from ")) )
-            if imports_count > 15:
-                evidence_list.append(f"Excessive imports ({imports_count}) in file (potential high coupling architecture smell).")
-
-            # If it's a test file and no actual hardcoded secret was found, filter out performance and security alerts
-            if is_test_file:
-                evidence_list = [e for e in evidence_list if "secret" in e.lower()]
-
-            # Feed to LLM with gathered static evidence
-            evidence_str = "\n".join(evidence_list) if evidence_list else "None detected statically."
-            return await self._run_llm_analysis(file_path, content, evidence_str)
-        except Exception as e:
-            logger.warning(f"Static file review failed for {file_path}: {e}")
-            return []
 
     def _run_static_rules(self, repo_dir: Path) -> List[Dict[str, Any]]:
         issues = []
         secrets_pattern = re.compile(r'(?i)(api_key|secret|password|token|credentials|private_key)\s*[:=]\s*["\'][a-zA-Z0-9_\-\+\/]{16,}["\']')
         eval_pattern = re.compile(r'\beval\s*\(')
-        pickle_pattern = re.compile(r'\bpickle\.loads\b')
+        exec_pattern = re.compile(r'\bexec\s*\(')
+        subprocess_shell_pattern = re.compile(r'subprocess\.[a-z_]+\([^)]*shell\s*=\s*True')
+        crypto_pattern = re.compile(r'\b(hashlib\.(md5|sha1)|crypto\.(md5|sha1))\b', re.IGNORECASE)
+        todo_pattern = re.compile(r'(?i)#\s*(TODO|FIXME|HACK|DEPRECATED)')
+        bare_except_pattern = re.compile(r'^\s*except\s*:\s*$|^\s*except\s+Exception\s*:\s*$')
+        import_pattern = re.compile(r'^\s*(import\s+[\w\.]+|^from\s+[\w\.]+\s+import\s+[\w\., ]+)', re.MULTILINE)
 
         for file_path in repo_dir.rglob("*"):
-            # Skip test files for static alerts unless they contain clear secrets/eval issues
-            is_test_file = "test_" in file_path.name or "_test" in file_path.name
-            
-            if file_path.is_file() and file_path.suffix in (".py", ".js", ".ts", ".cpp", ".c", ".h"):
+            if file_path.is_file() and file_path.suffix in (".py", ".js", ".ts", ".cpp", ".c", ".h", ".go", ".rs", ".java"):
+                is_test_file = "test_" in file_path.name or "_test" in file_path.name
+                
                 try:
                     content = file_path.read_text(encoding="utf-8", errors="ignore")
                     relative_path = str(file_path.relative_to(repo_dir)).replace('\\', '/')
                     lines = content.splitlines()
                     
-                    # Search Secrets
+                    if len(lines) > 300:
+                        issues.append({
+                            "severity": "Low",
+                            "category": "Maintainability",
+                            "issue": "Extremely long file",
+                            "file": relative_path,
+                            "line": 1,
+                            "confidence": 1.0,
+                            "why_it_matters": "Files over 300 lines become hard to navigate and often violate the Single Responsibility Principle.",
+                            "evidence": f"File has {len(lines)} lines",
+                            "recommendation": "Consider splitting this file into smaller, cohesive modules."
+                        })
+                    
+                    imports = import_pattern.findall(content)
+                    if len(imports) > 15:
+                        issues.append({
+                            "severity": "Medium",
+                            "category": "Code Quality",
+                            "issue": "High number of imports",
+                            "file": relative_path,
+                            "line": 1,
+                            "confidence": 1.0,
+                            "why_it_matters": "A high number of imports indicates tight coupling and potential architectural bottlenecks.",
+                            "evidence": f"{len(imports)} imports detected",
+                            "recommendation": "High coupling detected. Consider refactoring to reduce dependencies."
+                        })
+
+                    func_start = -1
+                    func_name = ""
+                    
                     for idx, line in enumerate(lines, 1):
+                        stripped = line.strip()
+                        if not stripped: continue
+                        
+                        # High Severity: Secrets
                         if secrets_pattern.search(line):
                             issues.append({
-                                "severity": "High",
-                                "category": "Security",
-                                "issue": "Potential hardcoded secret or API key",
-                                "file": relative_path,
-                                "line": idx,
-                                "evidence": line.strip(),
-                                "recommendation": "Move secrets to environment variables or config files."
+                                "severity": "High", "category": "Security", "issue": "Hardcoded secret or API key",
+                                "file": relative_path, "line": idx, "confidence": 1.0, 
+                                "why_it_matters": "Hardcoded secrets can be exposed in version control, leading to unauthorized access.",
+                                "evidence": line.strip()[:100],
+                                "recommendation": "Use environment variables or a secure vault for secrets."
                             })
-
-                    # Search Eval usage (exclude test files to avoid false positives)
-                    if not is_test_file:
-                        for idx, line in enumerate(lines, 1):
-                            if eval_pattern.search(line):
+                            
+                        if not is_test_file:
+                            # High: Security
+                            if eval_pattern.search(line) or exec_pattern.search(line):
                                 issues.append({
-                                    "severity": "High",
-                                    "category": "Security",
-                                    "issue": "Unsafe eval usage detected",
-                                    "file": relative_path,
-                                    "line": idx,
+                                    "severity": "High", "category": "Security", "issue": "Unsafe eval/exec usage",
+                                    "file": relative_path, "line": idx, "confidence": 1.0,
+                                    "why_it_matters": "Using eval or exec on untrusted input can lead to arbitrary code execution.",
                                     "evidence": line.strip(),
-                                    "recommendation": "Avoid using eval() as it can lead to arbitrary code execution."
+                                    "recommendation": "Avoid eval() or exec() to prevent arbitrary code execution."
                                 })
-
-                        for idx, line in enumerate(lines, 1):
-                            if pickle_pattern.search(line):
+                            if subprocess_shell_pattern.search(line):
                                 issues.append({
-                                    "severity": "Medium",
-                                    "category": "Security",
-                                    "issue": "Insecure deserialization using pickle",
-                                    "file": relative_path,
-                                    "line": idx,
+                                    "severity": "High", "category": "Security", "issue": "subprocess with shell=True",
+                                    "file": relative_path, "line": idx, "confidence": 1.0,
+                                    "why_it_matters": "shell=True allows attackers to execute arbitrary shell commands if inputs are untrusted.",
                                     "evidence": line.strip(),
-                                    "recommendation": "Use safer serialization alternatives like json or safetensors."
+                                    "recommendation": "Avoid shell=True as it can lead to shell injection vulnerabilities."
                                 })
+                            if crypto_pattern.search(line):
+                                issues.append({
+                                    "severity": "Medium", "category": "Security", "issue": "Weak cryptography (md5/sha1)",
+                                    "file": relative_path, "line": idx, "confidence": 1.0,
+                                    "why_it_matters": "MD5 and SHA-1 are cryptographically broken and vulnerable to collision attacks.",
+                                    "evidence": line.strip(),
+                                    "recommendation": "Use stronger algorithms like SHA-256 or bcrypt/argon2."
+                                })
+                            
+                            # Medium: Maintainability / Quality
+                            if bare_except_pattern.search(line):
+                                issues.append({
+                                    "severity": "Medium", "category": "Code Quality", "issue": "Broad exception handling",
+                                    "file": relative_path, "line": idx, "confidence": 1.0,
+                                    "why_it_matters": "Catching generic Exceptions masks unexpected bugs and makes debugging difficult.",
+                                    "evidence": line.strip(),
+                                    "recommendation": "Catch specific exceptions instead of using a bare except."
+                                })
+                                
+                            if todo_pattern.search(line):
+                                issues.append({
+                                    "severity": "Low", "category": "Maintainability", "issue": "Unresolved TODO/FIXME comment",
+                                    "file": relative_path, "line": idx, "confidence": 1.0,
+                                    "why_it_matters": "Unresolved comments indicate incomplete work or technical debt.",
+                                    "evidence": line.strip()[:100],
+                                    "recommendation": "Resolve the pending work or track it in an issue tracker."
+                                })
+                                
+                        # Function length check
+                        if file_path.suffix in (".py", ".js", ".ts"):
+                            if line.startswith("def ") or line.startswith("function ") or "=>" in line:
+                                if func_start != -1 and (idx - func_start) > 50:
+                                    issues.append({
+                                        "severity": "Medium", "category": "Code Quality", "issue": "Long function detected",
+                                        "file": relative_path, "line": func_start, "confidence": 1.0,
+                                        "why_it_matters": "Long functions are harder to read, test, and maintain.",
+                                        "evidence": f"Function {func_name} is {idx - func_start} lines long.",
+                                        "recommendation": "Refactor this function to be shorter and focused on a single responsibility."
+                                    })
+                                func_start = idx
+                                func_name = line.split("(")[0].replace("def ", "").replace("function ", "").strip()
+                            elif not line.startswith(" ") and not line.startswith("\t") and stripped and not line.startswith("@") and not line.startswith("export") and not line.startswith("const"):
+                                if func_start != -1 and (idx - func_start) > 50:
+                                    issues.append({
+                                        "severity": "Medium", "category": "Code Quality", "issue": "Long function detected",
+                                        "file": relative_path, "line": func_start, "confidence": 1.0,
+                                        "why_it_matters": "Long functions are harder to read, test, and maintain.",
+                                        "evidence": f"Function {func_name} is {idx - func_start} lines long.",
+                                        "recommendation": "Refactor this function to be shorter and focused on a single responsibility."
+                                    })
+                                func_start = -1
                 except Exception as e:
                     logger.warning(f"Static analysis failed for {file_path}: {e}")
                     
         return issues
-
-    async def _run_llm_analysis(self, file_path: str, content: str, static_evidence: str) -> List[Dict[str, Any]]:
-        system_prompt = (
-            "You are an expert static analyzer, principal architect, and security auditor.\n\n"
-            "Analyze the given source code file and identify actual issues matching the static evidence provided.\n"
-            "Strict Rules:\n"
-            "1. Base findings strictly on the code content. If no issue exists, return an empty list [].\n"
-            "2. If it is a test file, DO NOT report security warnings (unless it contains hardcoded production passwords/secrets) or performance smells.\n"
-            "3. Every reported issue MUST have an exact 'line' number and a concrete snippet in the 'evidence' key. If there is no specific code evidence, DO NOT report it.\n\n"
-            "Respond ONLY with a valid JSON list of issues matching this format:\n"
-            "[\n"
-            "  {\n"
-            "    \"severity\": \"High\" | \"Medium\" | \"Low\",\n"
-            "    \"category\": \"Architecture\" | \"Security\" | \"Performance\" | \"Maintainability\" | \"Bug\",\n"
-            "    \"issue\": \"Short issue description\",\n"
-            "    \"file\": \"path/to/file\",\n"
-            "    \"line\": 10,\n"
-            "    \"evidence\": \"exact line of code causing this issue\",\n"
-            "    \"recommendation\": \"Detailed, actionable recommendation on how to fix this issue with code examples if helpful.\",\n"
-            "    \"confidence\": 0.8\n"
-            "  }\n"
-            "]\n"
-            "Do not include markdown code blocks, intro, or explanation outside the JSON."
-        )
-
-        user_prompt = (
-            f"File: {file_path}\n"
-            f"Static Evidence Gathered:\n{static_evidence}\n\n"
-            f"Content:\n{content[:4000]}"
-        )
-        
-        try:
-            raw_response = await complete(system_prompt, user_prompt)
-            import json
-            clean_response = re.sub(r"^```json\s*", "", raw_response, flags=re.IGNORECASE)
-            clean_response = re.sub(r"\s*```$", "", clean_response, flags=re.IGNORECASE).strip()
-            
-            issues = json.loads(clean_response)
-            if isinstance(issues, list):
-                valid_issues = []
-                for issue in issues:
-                    # Double check evidence and fields
-                    if issue.get("evidence") and issue.get("line"):
-                        issue["file"] = file_path.replace('\\', '/')
-                        valid_issues.append(issue)
-                return valid_issues
-        except Exception as e:
-            logger.warning(f"Failed to parse LLM code review response: {e}")
-            
-        return []
