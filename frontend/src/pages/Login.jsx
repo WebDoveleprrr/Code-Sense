@@ -17,7 +17,7 @@ export default function Login() {
     try {
       // In development/testing, prefix with mock_token_ to trigger bypass on backend
       const token = `mock_token_${mockEmail.split("@")[0]}`;
-      const response = await fetch(`${import.meta.env?.VITE_API_URL || "http://localhost:8000/api/v1"}/auth/google`, {
+      const response = await fetch(`${import.meta.env?.VITE_API_URL || "/api/v1"}/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: token }),
@@ -41,7 +41,7 @@ export default function Login() {
   const handleGoogleSuccess = async (credentialResponse) => {
     setLoading(true);
     try {
-      const response = await fetch(`${import.meta.env?.VITE_API_URL || "http://localhost:8000/api/v1"}/auth/google`, {
+      const response = await fetch(`${import.meta.env?.VITE_API_URL || "/api/v1"}/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: credentialResponse.credential }), //google token which is sent from frontend and verified at backend

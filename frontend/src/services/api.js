@@ -1,7 +1,7 @@
 // src/services/api.js
 import axios from "axios"; //axois carries all logs
 
-const BASE_URL = import.meta.env?.VITE_API_URL || "http://localhost:8000/api/v1";
+const BASE_URL = import.meta.env?.VITE_API_URL || "/api/v1";
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -88,7 +88,7 @@ api.interceptors.response.use(
     // Do NOT refresh on standard 401s (e.g. invalid repo access)
     const isTokenExpired = err.response?.data?.code === "TOKEN_EXPIRED";
 
-    if (isTokenExpired && !originalRequest._retry) {
+    if (isTokenExpired && !originalRequest._retry && !originalRequest.url?.includes('/auth/refresh')) {
       if (isRefreshing) {
         // Suspend this request until the lock is released
         return new Promise(function(resolve, reject) {

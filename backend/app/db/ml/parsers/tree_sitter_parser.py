@@ -89,6 +89,8 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
         "interfaces": [],
         "structs": [],
         "comments": [],
+        "namespaces": [],
+        "type_aliases": [],
     }
 
     if not parser:
@@ -103,6 +105,13 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
     #access metadata
     def get_node_text(node) -> str:
         return source[node.start_byte:node.end_byte]
+
+    def get_docstring(start_line: int) -> Optional[str]:
+        for c in reversed(result["comments"]):
+            if c["end_lineno"] == start_line - 1 or c["end_lineno"] == start_line - 2:
+                if c["text"].startswith("/**") or c["text"].startswith("/*"):
+                    return c["text"]
+        return None
 
     #visit every node in AST tree
     def walk(node, parent_symbol: Optional[str] = None, in_class: bool = False):
@@ -180,8 +189,14 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
             elif node_type in ("import_statement", "import_from_statement"):
                 start = node.start_point[0] + 1
                 end = node.end_point[0] + 1
+                
+                module_name = get_node_text(node)
+                src_node = node.child_by_field_name("source") or node.child_by_field_name("module")
+                if src_node:
+                    module_name = get_node_text(src_node).strip("'\"")
+                    
                 symbol = {
-                    "name": get_node_text(node).strip(),
+                    "name": module_name,
                     "type": "import",
                     "file": file_path,
                     "start_line": start,
@@ -190,7 +205,7 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                 }
                 result["imports"].append({
                     "type": "import",
-                    "module": get_node_text(node),
+                    "module": module_name,
                     "lineno": start,
                 })
                 symbols.append(symbol)
@@ -211,10 +226,28 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                         "end_line": end,
                         "parent_symbol": parent_symbol,
                     }
+                    
+                    extends = None
+                    implements = []
+                    heritage = node.child_by_field_name("heritage") or next((c for c in node.children if c.type == "class_heritage"), None)
+                    if heritage:
+                        for clause in heritage.children:
+                            if clause.type == "extends_clause":
+                                ext_node = next((c for c in clause.children if c.type in ("identifier", "type_identifier")), None)
+                                if ext_node:
+                                    extends = get_node_text(ext_node)
+                            elif clause.type == "implements_clause":
+                                for c in clause.children:
+                                    if c.type in ("type_identifier", "identifier"):
+                                        implements.append(get_node_text(c))
+                    
                     result["classes"].append({
                         "name": name,
                         "lineno": start,
                         "end_lineno": end,
+                        "extends": extends,
+                        "implements": implements,
+                        "docstring": get_docstring(start)
                     })
                     symbols.append(symbol)
                     current_parent = name
@@ -241,19 +274,38 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                     "end_line": end,
                     "parent_symbol": parent_symbol,
                 }
+                params = []
+                formal_params = next((c for c in node.children if c.type == "formal_parameters"), None)
+                if formal_params:
+                    for c in formal_params.children:
+                        if c.type in ("identifier", "required_parameter", "optional_parameter"):
+                            params.append(get_node_text(c).split(":")[0].strip())
+                
+                is_async = "async" in get_node_text(node).split("{")[0]
+                is_arrow = node_type == "arrow_function"
+
                 result["functions"].append({
                     "name": name,
                     "lineno": start,
                     "end_lineno": end,
-                    "is_async": False,
+                    "is_async": is_async,
+                    "is_arrow": is_arrow,
+                    "params": params,
+                    "docstring": get_docstring(start)
                 })
                 symbols.append(symbol)
 
             elif node_type == "import_statement":
                 start = node.start_point[0] + 1
                 end = node.end_point[0] + 1
+                
+                module_name = get_node_text(node)
+                src_node = node.child_by_field_name("source")
+                if src_node:
+                    module_name = get_node_text(src_node).strip("'\"")
+                    
                 symbol = {
-                    "name": get_node_text(node).strip(),
+                    "name": module_name,
                     "type": "import",
                     "file": file_path,
                     "start_line": start,
@@ -262,10 +314,35 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                 }
                 result["imports"].append({
                     "type": "import",
-                    "module": get_node_text(node),
+                    "module": module_name,
                     "lineno": start,
                 })
                 symbols.append(symbol)
+
+            elif node_type == "call_expression":
+                func_node = node.child_by_field_name("function")
+                if func_node and get_node_text(func_node) == "require":
+                    args_node = node.child_by_field_name("arguments")
+                    if args_node and len(args_node.children) > 1:
+                        for arg in args_node.children:
+                            if arg.type == "string":
+                                module_name = get_node_text(arg).strip("'\"")
+                                start = node.start_point[0] + 1
+                                end = node.end_point[0] + 1
+                                symbol = {
+                                    "name": module_name,
+                                    "type": "require",
+                                    "file": file_path,
+                                    "start_line": start,
+                                    "end_line": end,
+                                    "parent_symbol": parent_symbol,
+                                }
+                                result["imports"].append({
+                                    "type": "require",
+                                    "module": module_name,
+                                    "lineno": start,
+                                })
+                                symbols.append(symbol)
 
             elif node_type == "export_statement" or node_type.startswith("export_"):
                 start = node.start_point[0] + 1
@@ -306,9 +383,52 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                     })
                     symbols.append(symbol)
 
+            elif node_type == "type_alias_declaration":
+                name_node = node.child_by_field_name("name")
+                if name_node:
+                    name = get_node_text(name_node)
+                    start = node.start_point[0] + 1
+                    end = node.end_point[0] + 1
+                    symbol = {
+                        "name": name,
+                        "type": "type_alias",
+                        "file": file_path,
+                        "start_line": start,
+                        "end_line": end,
+                        "parent_symbol": parent_symbol,
+                    }
+                    result["type_aliases"].append({
+                        "name": name,
+                        "lineno": start,
+                        "end_lineno": end,
+                    })
+                    symbols.append(symbol)
+
         # C/C++ parsing logic
         elif language in ("cpp", "c"):
-            if node_type in ("class_specifier", "struct_specifier"):
+            if node_type == "namespace_definition":
+                name_node = node.child_by_field_name("name")
+                if name_node:
+                    name = get_node_text(name_node)
+                    start = node.start_point[0] + 1
+                    end = node.end_point[0] + 1
+                    symbol = {
+                        "name": name,
+                        "type": "namespace",
+                        "file": file_path,
+                        "start_line": start,
+                        "end_line": end,
+                        "parent_symbol": parent_symbol,
+                    }
+                    result["namespaces"].append({
+                        "name": name,
+                        "lineno": start,
+                        "end_lineno": end,
+                    })
+                    symbols.append(symbol)
+                    current_parent = name
+
+            elif node_type in ("class_specifier", "struct_specifier"):
                 name_node = node.child_by_field_name("name")
                 if name_node:
                     name = get_node_text(name_node)
@@ -323,17 +443,29 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                         "end_line": end,
                         "parent_symbol": parent_symbol,
                     }
+                    
+                    bases = []
+                    base_clause = next((c for c in node.children if c.type == "base_class_clause"), None)
+                    if base_clause:
+                        for c in base_clause.children:
+                            if c.type in ("type_identifier", "identifier"):
+                                bases.append(get_node_text(c))
+                                
                     if sym_type == "class":
                         result["classes"].append({
                             "name": name,
                             "lineno": start,
                             "end_lineno": end,
+                            "bases": bases,
+                            "docstring": get_docstring(start)
                         })
                     else:
                         result["structs"].append({
                             "name": name,
                             "lineno": start,
                             "end_lineno": end,
+                            "bases": bases,
+                            "docstring": get_docstring(start)
                         })
                     symbols.append(symbol)
                     current_parent = name
@@ -361,18 +493,38 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                     "end_line": end,
                     "parent_symbol": parent_symbol,
                 }
+                params = []
+                param_list = None
+                if declarator:
+                    curr = declarator
+                    while curr.child_by_field_name("declarator"):
+                        curr = curr.child_by_field_name("declarator")
+                    param_list = next((c for c in curr.children if c.type == "parameter_list"), None)
+                if param_list:
+                    for c in param_list.children:
+                        if c.type == "parameter_declaration":
+                            params.append(get_node_text(c))
+                            
                 result["functions"].append({
                     "name": name,
                     "lineno": start,
                     "end_lineno": end,
+                    "params": params,
+                    "docstring": get_docstring(start)
                 })
                 symbols.append(symbol)
 
             elif node_type == "preproc_include":
                 start = node.start_point[0] + 1
                 end = node.end_point[0] + 1
+                
+                module_name = get_node_text(node)
+                path_node = node.child_by_field_name("path")
+                if path_node:
+                    module_name = get_node_text(path_node)
+                    
                 symbol = {
-                    "name": get_node_text(node).strip(),
+                    "name": module_name,
                     "type": "import",
                     "file": file_path,
                     "start_line": start,
@@ -381,7 +533,7 @@ def parse_with_tree_sitter(source: str, file_path: str, language: str) -> Dict[s
                 }
                 result["imports"].append({
                     "type": "import",
-                    "module": get_node_text(node),
+                    "module": module_name,
                     "lineno": start,
                 })
                 symbols.append(symbol)
