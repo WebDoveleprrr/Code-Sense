@@ -91,7 +91,7 @@ def test_python_parser_syntax_error():
 # ------------------------------------------------------------------ #
 
 def test_js_parser_functions():
-    from app.db.ml.parsers.js_ts_parser import parse_js_ts
+    from app.db.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
 
     source = textwrap.dedent(
         """
@@ -122,7 +122,7 @@ def test_js_parser_functions():
         """
     )
 
-    result = parse_js_ts(source, "app.js", "javascript")
+    result = parse_with_tree_sitter(source, "app.js", "javascript")
 
     func_names = {f["name"] for f in result["functions"]}
     assert "formatName" in func_names
@@ -140,7 +140,7 @@ def test_js_parser_functions():
 
 
 def test_ts_parser_interfaces():
-    from app.db.ml.parsers.js_ts_parser import parse_js_ts
+    from app.db.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
 
     source = textwrap.dedent(
         """
@@ -157,7 +157,7 @@ def test_ts_parser_interfaces():
         """
     )
 
-    result = parse_js_ts(source, "types.ts", "typescript")
+    result = parse_with_tree_sitter(source, "types.ts", "typescript")
 
     interface_names = {i["name"] for i in result.get("interfaces", [])}
     assert "User" in interface_names
@@ -174,7 +174,7 @@ def test_ts_parser_interfaces():
 # ------------------------------------------------------------------ #
 
 def test_cpp_parser_basic():
-    from app.db.ml.parsers.cpp_parser import parse_cpp
+    from app.db.ml.parsers.tree_sitter_parser import parse_with_tree_sitter
 
     source = textwrap.dedent(
         """
@@ -200,10 +200,10 @@ def test_cpp_parser_basic():
         """
     )
 
-    result = parse_cpp(source, "math.cpp", "cpp")
+    result = parse_with_tree_sitter(source, "math.cpp", "cpp")
 
-    assert any(i["header"] == "iostream" and i["system"] for i in result["imports"])
-    assert any(i["header"] == "mylib.h" and not i["system"] for i in result["imports"])
+    assert any(i["module"] == "<iostream>" for i in result["imports"])
+    assert any(i["module"] == '"mylib.h"' for i in result["imports"])
 
     assert any(n["name"] == "utils" for n in result["namespaces"])
 
